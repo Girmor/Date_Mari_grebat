@@ -4,229 +4,116 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="description" content="Інтерактивний рандомізатор пригод для незабутнього дня">
-  <meta name="theme-color" content="#ff6b81">
+  <meta name="theme-color" content="#F4EFE6">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  
-  <title>✨ Рандомізатор подій</title>
-  
-  <!-- Favicon -->
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+
+  <title>Рандомізатор подій</title>
+
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎲</text></svg>">
-  
-  <!-- Fonts -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=Playfair+Display:wght@400;600;700&display=swap" rel="stylesheet">
-  
-  <!-- Font Awesome -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-  
-  <!-- Styles -->
+
+  <!-- Fonts (both have full Ukrainian Cyrillic: і ї є ґ) -->
+  <link rel="stylesheet" href="fonts/fonts.css">
+
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <!-- Particles Background -->
-  <div id="particles" class="particles-container" aria-hidden="true"></div>
-  
-  <!-- Theme Toggle -->
-  <button id="themeToggle" class="theme-toggle" aria-label="Перемкнути тему">
-    <i class="fas fa-moon"></i>
-    <i class="fas fa-sun"></i>
-  </button>
+  <!-- Inline icon set (stroke icons, one consistent weight) -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="i-sound" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></symbol>
+      <symbol id="i-mute" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/></symbol>
+      <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="5" r="2.5"/><path d="M8.5 19H16a3.5 3.5 0 0 0 0-7H8a3.5 3.5 0 0 1 0-7h7.5"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7L20 8.5"/><path d="M20 3.5v5h-5"/></symbol>
+      <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></symbol>
+      <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M3 7h3.5c3 0 4.5 10 8 10H21"/><path d="M3 17h3.5c1.4 0 2.4-2 3.3-4.2"/><path d="M14.2 11.2C15 9 16 7 17.5 7H21"/><path d="m18 4 3 3-3 3"/><path d="m18 14 3 3-3 3"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5 10 17.5 19.5 7"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11"/><path d="m7 10.5 5 5 5-5"/><path d="M5 20h14"/></symbol>
+    </defs>
+  </svg>
 
-  <!-- Sound Toggle -->
-  <button id="soundToggle" class="sound-toggle" aria-label="Увімкнути/вимкнути звук">
-    <i class="fas fa-volume-up"></i>
-    <i class="fas fa-volume-mute"></i>
-  </button>
-
-  <!-- Progress Indicator -->
-  <nav id="progressBar" class="progress-bar" aria-label="Прогрес">
-    <div class="progress-line"></div>
-  </nav>
-
-  <!-- Global Timer -->
-  <aside id="globalTimer" class="global-timer" role="timer" aria-live="off">
-    <i class="fas fa-hourglass-half"></i>
-    <div class="timer-body">
-      <span class="timer-label"></span>
-      <span class="timer-text"></span>
-    </div>
-  </aside>
-
-  <!-- Conversation Topics Container -->
-  <div id="conversationTopicsContainer" class="topics-container"></div>
-
-  <!-- Intro Screens -->
-  <section id="intro-1" class="screen intro-screen active" data-step="intro-1">
-    <div class="floating-icons" aria-hidden="true">
-      <span class="float-icon">✨</span>
-      <span class="float-icon">🎲</span>
-      <span class="float-icon">🎈</span>
-      <span class="float-icon">💫</span>
-      <span class="float-icon">🗺️</span>
-    </div>
-    <article class="card glass-card">
-      <div class="card-glow"></div>
-      <h1 class="title-fancy">
-        <span class="title-line">Привіт, Мері!</span>
-        <span class="title-emoji">😊</span>
-      </h1>
-      <p class="subtitle">Радий тебе бачити! Давай весело проведемо час разом.</p>
-      <button class="btn btn-primary btn-glow" data-next="intro-2">
-        <span>Продовжити</span>
-        <i class="fas fa-arrow-right"></i>
-      </button>
-    </article>
-  </section>
-
-  <section id="intro-2" class="screen intro-screen" data-step="intro-2">
-    <div class="floating-icons" aria-hidden="true">
-      <span class="float-icon">😄</span>
-      <span class="float-icon">🤣</span>
-      <span class="float-icon">😸</span>
-    </div>
-    <article class="card glass-card">
-      <div class="card-glow"></div>
-      <div class="joke-badge">
-        <i class="fas fa-laugh-squint"></i>
-        <span>Міні-анекдот</span>
-      </div>
-      <p class="joke-text">
-        "Намагаючись сказати слово <strong>«ксерокс»</strong>, заїка зібрав біля себе усіх котів району."
-      </p>
-      <p class="subtitle">Ну що, почнемо? 🙃</p>
-      <button class="btn btn-primary btn-glow" data-next="intro-3">
-        <span>Продовжити</span>
-        <i class="fas fa-arrow-right"></i>
-      </button>
-    </article>
-  </section>
-
-  <section id="intro-3" class="screen intro-screen" data-step="intro-3">
-    <div class="floating-icons" aria-hidden="true">
-      <span class="float-icon">✨</span>
-      <span class="float-icon">🎲</span>
-      <span class="float-icon">🔮</span>
-      <span class="float-icon">💫</span>
-    </div>
-    <article class="card glass-card">
-      <div class="card-glow"></div>
-      <h1 class="title-fancy">
-        <span class="title-line">Загадковість</span>
-        <span class="title-emoji">🎲</span>
-      </h1>
-      <p class="description">
-        Натискаючи кнопку <strong>«Обрати варіант»</strong>, ти обиратимеш події та локації —
-        а випадок підкаже цікаву ідею для нашої зустрічі!
-        А якщо варіант не до душі, на кожному етапі можна <strong>один раз</strong> попросити інший 😉
-      </p>
-      <button class="btn btn-primary btn-glow" data-next="intro-4">
-        <span>Продовжити</span>
-        <i class="fas fa-arrow-right"></i>
-      </button>
-    </article>
-  </section>
-
-  <section id="intro-4" class="screen intro-screen" data-step="intro-4">
-    <div class="floating-icons" aria-hidden="true">
-      <span class="float-icon">🔒</span>
-      <span class="float-icon">⏰</span>
-      <span class="float-icon">🤫</span>
-    </div>
-    <article class="card glass-card">
-      <div class="card-glow"></div>
-      <div class="lock-icon-container">
-        <i class="fas fa-lock lock-icon"></i>
-      </div>
-      <p class="description">
-        Кожна наступна подія буде тимчасово <strong>«заморожена»</strong> й залишатиметься секретом 🤫.
-        Щоб її розблокувати, потрібно провести щонайменше <strong>15 хвилин</strong> на попередній локації.
-      </p>
-      <button class="btn btn-primary btn-glow" data-next="intro-5">
-        <span>Продовжити</span>
-        <i class="fas fa-arrow-right"></i>
-      </button>
-    </article>
-  </section>
-
-  <section id="intro-5" class="screen intro-screen" data-step="intro-5">
-    <div class="floating-icons" aria-hidden="true">
-      <span class="float-icon">🎉</span>
-      <span class="float-icon">🚀</span>
-      <span class="float-icon">🎈</span>
-      <span class="float-icon">🌟</span>
-    </div>
-    <article class="card glass-card">
-      <div class="card-glow"></div>
-      <h1 class="title-fancy">
-        <span class="title-line">Готові?</span>
-        <span class="title-emoji">😇</span>
-      </h1>
-      <p class="description">
-        Не хвилюйся — довго мучити тебе не буду, але обіцяю: буде <strong>весело</strong>, 
-        <strong>цікаво</strong> та трохи <strong>непередбачувано</strong>! 😏🎉
-      </p>
-      <button class="btn btn-primary btn-glow btn-start" data-next="stages">
-        <span>Почнемо</span>
-        <i class="fas fa-rocket"></i>
-      </button>
-    </article>
-  </section>
-
-  <!-- Stages Container -->
-  <main id="stagesContainer" class="stages-container">
-    <!-- Stages will be dynamically generated -->
-  </main>
-
-  <!-- Final Screen -->
-  <section id="final" class="screen final-screen" data-step="final">
-    <div class="floating-icons celebration" aria-hidden="true">
-      <span class="float-icon">🎉</span>
-      <span class="float-icon">⭐</span>
-      <span class="float-icon">🎊</span>
-      <span class="float-icon">✨</span>
-      <span class="float-icon">💫</span>
-      <span class="float-icon">🌟</span>
-    </div>
-    <article class="card glass-card final-card">
-      <div class="card-glow"></div>
-      <h1 class="title-fancy celebration-title">
-        <span class="title-line">Дякую!</span>
-        <span class="title-emoji">🤗</span>
-      </h1>
-      <p class="subtitle">Дуже радий, що ми провели цей день разом!</p>
-      
-      <!-- Roadmap Container -->
-      <div id="roadmapContainer" class="roadmap-container"></div>
-      
-      <!-- Emoji Rating -->
-      <div class="rating-section">
-        <p class="rating-prompt">Оціни цей день:</p>
-        <div class="emoji-rating" role="group" aria-label="Оцінка дня">
-          <button class="emoji-btn" data-rating="excited" aria-label="У захваті">🤩</button>
-          <button class="emoji-btn" data-rating="laughing" aria-label="Дуже весело">😂</button>
-          <button class="emoji-btn" data-rating="happy" aria-label="Добре">😊</button>
-          <button class="emoji-btn" data-rating="neutral" aria-label="Нормально">😐</button>
-          <button class="emoji-btn" data-rating="speechless" aria-label="Без слів">😶</button>
-          <button class="emoji-btn" data-rating="sad" aria-label="Сумно">😢</button>
+  <div class="app" id="app">
+    <header class="topbar" id="topbar">
+      <button class="progress" id="progress" type="button" aria-label="Маршрут дня"></button>
+      <div class="topbar-row">
+        <p class="kicker" id="kicker"></p>
+        <div class="topbar-actions">
+          <button class="text-icon-btn" id="routeBtn" type="button" hidden>
+            <svg class="icon" aria-hidden="true"><use href="#i-route"/></svg>
+            <span>Маршрут</span>
+          </button>
+          <button class="icon-btn" id="soundToggle" type="button" aria-label="Звук">
+            <svg class="icon icon-on" aria-hidden="true"><use href="#i-sound"/></svg>
+            <svg class="icon icon-off" aria-hidden="true"><use href="#i-mute"/></svg>
+          </button>
         </div>
       </div>
-      
-      <button id="downloadRoadmap" class="btn btn-primary">
-        <i class="fas fa-download"></i>
-        <span>Зберегти як картинку</span>
-      </button>
-    </article>
-  </section>
+    </header>
 
-  <!-- Toast Notifications -->
-  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+    <main class="scenes" id="scenes" aria-live="polite"></main>
+  </div>
 
-  <!-- Confetti Library -->
-  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
-  
-  <!-- Main Script -->
+  <!-- Route bottom sheet -->
+  <div class="sheet" id="routeSheet" hidden>
+    <div class="sheet-backdrop" data-close></div>
+    <section class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="routeSheetTitle">
+      <div class="sheet-head">
+        <h2 class="sheet-title" id="routeSheetTitle">Маршрут</h2>
+        <button class="icon-btn" type="button" data-close aria-label="Закрити">
+          <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+        </button>
+      </div>
+      <ol class="route" id="routeSheetList"></ol>
+    </section>
+  </div>
+
+  <div class="toasts" id="toastContainer" aria-live="polite"></div>
+
+  <!-- ===== Intro copy (one template per story slide) ===== -->
+  <template id="tpl-intro-1" data-button="Продовжити">
+    <div class="intro-copy">
+      <h1 class="display fit">Привіт, Мері!</h1>
+      <p class="lead">Радий тебе бачити! Давай весело проведемо час разом.</p>
+    </div>
+  </template>
+
+  <template id="tpl-intro-2" data-button="Продовжити">
+    <div class="intro-copy">
+      <p class="eyebrow">Міні-анекдот</p>
+      <blockquote class="joke">Намагаючись сказати слово <strong>«ксерокс»</strong>, заїка зібрав біля себе усіх котів району.</blockquote>
+      <p class="lead">Ну що, почнемо? 🙃</p>
+    </div>
+  </template>
+
+  <template id="tpl-intro-3" data-button="Продовжити">
+    <div class="intro-copy">
+      <h1 class="display fit">Загадковість</h1>
+      <p class="lead">Натискаючи кнопку <strong>«Обрати варіант»</strong>, ти обиратимеш події та локації — а випадок підкаже цікаву ідею для нашої зустрічі!</p>
+      <p class="body">А якщо варіант не до душі, на кожному етапі можна <strong>один раз</strong> попросити інший 😉</p>
+    </div>
+  </template>
+
+  <template id="tpl-intro-4" data-button="Продовжити">
+    <div class="intro-copy">
+      <svg class="icon icon-hero" aria-hidden="true"><use href="#i-lock"/></svg>
+      <p class="lead lead-xl">Кожна наступна подія буде тимчасово <strong>«заморожена»</strong> й залишатиметься секретом 🤫.</p>
+      <p class="body">Щоб її розблокувати, потрібно провести щонайменше <strong>15 хвилин</strong> на попередній локації.</p>
+    </div>
+  </template>
+
+  <template id="tpl-intro-5" data-button="Почнемо">
+    <div class="intro-copy">
+      <h1 class="display fit">Готові?</h1>
+      <p class="lead">Не хвилюйся — довго мучити тебе не буду, але обіцяю: буде <strong>весело</strong>, <strong>цікаво</strong> та трохи <strong>непередбачувано</strong>! 😏🎉</p>
+    </div>
+  </template>
+
+  <!-- Confetti (short bursts only) -->
+  <script src="vendor/confetti.browser.min.js"></script>
+
   <script src="script.js"></script>
 </body>
 </html>

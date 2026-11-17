@@ -1,6 +1,15 @@
+// =====================================================================
+// ⚠️⚠️⚠️  ТЕСТОВИЙ РЕЖИМ  ⚠️⚠️⚠️
+//   true  → пауза між етапами лише 5 секунд (щоб усе швидко перевірити);
+//   false → справжні 15 хвилин.
+// ОБОВ'ЯЗКОВО ПОСТАВ false, ПЕРШ НІЖ ДАВАТИ ПОСИЛАННЯ МЕРІ!
+// (Коли тут false, додай ?fast=1 до адреси, щоб усе одно мати 5 секунд.)
+// =====================================================================
+const TEST_MODE = true;
+
 /**
- * Date Randomizer - Modern ES6+ Implementation
- * Інтерактивний рандомізатор подій для веселого дня
+ * Рандомізатор подій — інтерактивний сценарій веселого дня.
+ * Чистий статичний сайт: index.html + script.js + style.css, без збірки.
  */
 
 // ============================================
@@ -11,21 +20,21 @@
 //   ?fast=1  — пауза між етапами 5 секунд замість 15 хвилин;
 //   ?reset=1 — стерти збережений прогрес і почати з чистого аркуша.
 const URL_PARAMS = new URLSearchParams(window.location.search);
-const FAST_MODE = URL_PARAMS.get('fast') === '1';
+const FAST_MODE = TEST_MODE || URL_PARAMS.get('fast') === '1';
 
 const CONFIG = {
   DELAY_MS: FAST_MODE ? 5 * 1000 : 15 * 60 * 1000, // пауза між етапами
   MAX_REROLLS: 1, // скільки разів на етапі можна натиснути «Інший варіант»
   OWNER_SKIP_HOLD_MS: 1500, // утримання таймера, щоб одразу завершити очікування
-  IMAGE_WAIT_MS: 4000, // скільки максимум чекати картинку перед переворотом карти
-  STORAGE_KEY: 'dateRandomizerState_v3',
-  LEGACY_STORAGE_KEYS: ['dateRandomizerState_v2', 'dateRandomizerState'],
+  IMAGE_WAIT_MS: 4000, // скільки максимум чекати картинку перед показом результату
+  SHUFFLE_MS: 2200, // тривалість «тасування» фото
+  SCENE_MS: 300, // тривалість переходу між екранами
+  STORAGE_KEY: 'dateRandomizerState_v4',
+  LEGACY_STORAGE_KEYS: ['dateRandomizerState_v3', 'dateRandomizerState_v2', 'dateRandomizerState'],
   USER_ID_KEY: 'dateRandomizerUserId',
   FAVORITES_KEY: 'favoriteTopics',
-  SPIN_DURATION: 2500,
-  SPIN_INTERVAL: 80,
   SOUNDS_ENABLED_KEY: 'soundsEnabled',
-  THEME_KEY: 'dateRandomizerTheme'
+  LEGACY_THEME_KEY: 'dateRandomizerTheme'
 };
 
 // ============================================
@@ -37,6 +46,9 @@ const CONFIG = {
 //   image — шлях до картинки в папці images/, наприклад "images/Kino_novyi.jpg".
 //           Назва файлу без пробілів, а великі й малі літери мають точно
 //           збігатися з назвою файлу (GitHub Pages їх розрізняє).
+//   color — (у етапу, необов'язково) колір фону цього етапу, напр. "#D4874A";
+//           колір тексту (темний чи світлий) підбереться автоматично.
+//   icon  — більше не використовується (лишилось від старого дизайну), можна не чіпати.
 // Щоб замінити варіант — зміни text та image; щоб додати — скопіюй рядок.
 // Якщо картинка не завантажиться, замість неї з'явиться емодзі етапу.
 // Після правок на телефоні, де вже була репетиція, відкрий сайт з ?reset=1.
@@ -48,6 +60,7 @@ const DATE_OPTIONS = {
       question: "Час кави ☕️ Обирай, де саме:",
       icon: "fa-mug-hot",
       emoji: "☕",
+      color: "#D4874A",
       options: [
         { text: "Parcoffka", image: "images/Kava_Parcoffka.jpg" },
         { text: "Кав'ярня «Кориця»", image: "images/Kava_koriza.jpg" },
@@ -60,6 +73,7 @@ const DATE_OPTIONS = {
       question: "Прогуляємося? Обирай маршрут:",
       icon: "fa-person-walking",
       emoji: "🚶",
+      color: "#5DB97A",
       options: [
         { text: "Сквер Івана Старова", image: "images/Prog_Parg_Starova.jpg" },
         { text: "Парк Шевченка", image: "images/Prog_Park_Shevshenka.jpg" },
@@ -72,6 +86,7 @@ const DATE_OPTIONS = {
       question: "Щось я зголоднів… Врятуєш мене?",
       icon: "fa-utensils",
       emoji: "🍽️",
+      color: "#F05A3A",
       options: [
         { text: "Buon Fratelli", image: "images/Rest_Bioni.jpg" },
         { text: "BROOKS eats & drinks", image: "images/Rest_brooks.jpg" },
@@ -84,6 +99,7 @@ const DATE_OPTIONS = {
       question: "Може, глянемо фільм?",
       icon: "fa-film",
       emoji: "🎬",
+      color: "#2E2A7A",
       // TODO(власник): ці три фільми ЗАСТАРІЛІ — це заглушки!
       // Заміни назви й картинки на те, що зараз справді йде в кіно.
       options: [
@@ -97,6 +113,7 @@ const DATE_OPTIONS = {
       question: "За твоє «терпіння» — міні-подарунок!",
       icon: "fa-gift",
       emoji: "🎁",
+      color: "#F4A6C6",
       options: [
         { text: "Квіти", image: "images/Podarik_kviti.jpg" },
         { text: "Рафаелки", image: "images/Podarik_rafaelo.jpeg" },
@@ -108,36 +125,51 @@ const DATE_OPTIONS = {
 };
 
 // ============================================
+// LOOK: palette & photo shapes
+// ============================================
+
+const PALETTE = {
+  ink: '#141210',
+  cream: '#F4EFE6',
+  accent: '#FFD23F',
+  // used when a stage has no `color` of its own
+  stageFallback: ['#D4874A', '#5DB97A', '#F05A3A', '#2E2A7A', '#F4A6C6']
+};
+
+// Photo frame shape per stage (width / height). Everything else is 4:3.
+const PHOTO_RATIO = { movie: 2 / 3, gift: 1 };
+
+const STAGE_COUNT = DATE_OPTIONS.stages.length;
+
+// ============================================
 // UTILITIES
 // ============================================
 
 class Utils {
-  static generateId() {
-    return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+  static $(selector, root = document) {
+    return root.querySelector(selector);
   }
 
-  static $(selector) {
-    return document.querySelector(selector);
-  }
-
-  static $$(selector) {
-    return document.querySelectorAll(selector);
+  static $$(selector, root = document) {
+    return root.querySelectorAll(selector);
   }
 
   static vibrate(pattern = 50) {
-    if ('vibrate' in navigator) {
-      navigator.vibrate(pattern);
+    try {
+      if ('vibrate' in navigator) navigator.vibrate(pattern);
+    } catch (e) {
+      // not supported (iOS) — ignore
     }
   }
 
   static formatTime(ms) {
-    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
     const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
     const seconds = String(totalSeconds % 60).padStart(2, '0');
     return `${minutes}:${seconds}`;
   }
 
-  static async preloadImage(src) {
+  static preloadImage(src) {
     return new Promise((resolve, reject) => {
       const img = new Image();
       img.onload = () => resolve(img);
@@ -166,10 +198,167 @@ class Utils {
     return array[Math.floor(Math.random() * array.length)];
   }
 
-  static easeOutQuad(t) {
-    return t * (2 - t);
+  static shuffled(array) {
+    const a = [...array];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  static pad2(n) {
+    return String(n).padStart(2, '0');
+  }
+
+  static escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
+
+  static reducedMotion() {
+    try {
+      return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  static icon(name, className = '') {
+    return `<svg class="icon ${className}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+  }
+
+  // Shrinks a heading until its longest word fits on a line (no mid-word breaks).
+  static fit(el, minPx = 20) {
+    if (!el || !el.isConnected) return;
+    el.style.fontSize = '';
+    el.style.overflowWrap = '';
+    let size = parseFloat(getComputedStyle(el).fontSize) || 16;
+    let guard = 60;
+    while (el.scrollWidth > el.clientWidth + 1 && size > minPx && guard--) {
+      size -= 1;
+      el.style.fontSize = `${size}px`;
+    }
+    if (el.scrollWidth > el.clientWidth + 1) el.style.overflowWrap = 'anywhere';
+  }
+
+  static restartAnimation(el, className) {
+    el.classList.remove(className);
+    void el.offsetWidth; // reflow so the animation can run again
+    el.classList.add(className);
   }
 }
+
+// Picture with a neat fallback: if the image fails, the stage emoji shows instead.
+function createPhoto(option, stage, className = '') {
+  const wrap = document.createElement('div');
+  wrap.className = `photo ${className}`.trim();
+
+  const img = new Image();
+  img.alt = option.text;
+  img.decoding = 'async';
+  img.addEventListener('load', () => wrap.classList.remove('is-failed'));
+  img.addEventListener('error', () => wrap.classList.add('is-failed'));
+
+  const placeholder = document.createElement('span');
+  placeholder.className = 'ph';
+  placeholder.setAttribute('aria-hidden', 'true');
+  placeholder.textContent = stage.emoji;
+
+  wrap.append(img, placeholder);
+  img.src = option.image;
+  return wrap;
+}
+
+function stageColor(index) {
+  const own = DATE_OPTIONS.stages[index]?.color;
+  return Color.isValid(own) ? own : PALETTE.stageFallback[index % PALETTE.stageFallback.length];
+}
+
+function stageRatio(index) {
+  return PHOTO_RATIO[DATE_OPTIONS.stages[index]?.id] || 4 / 3;
+}
+
+// ============================================
+// COLOUR (contrast-checked chapter palettes)
+// ============================================
+
+const Color = {
+  isValid(hex) {
+    return typeof hex === 'string' && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(hex);
+  },
+
+  rgb(hex) {
+    let h = hex.replace('#', '');
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16));
+  },
+
+  toHex(rgb) {
+    return `#${rgb.map(v => Math.round(Math.min(255, Math.max(0, v))).toString(16).padStart(2, '0')).join('')}`;
+  },
+
+  luminance(hex) {
+    const lin = (c) => {
+      const v = c / 255;
+      return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    };
+    const [r, g, b] = Color.rgb(hex);
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  },
+
+  contrast(a, b) {
+    const x = Color.luminance(a);
+    const y = Color.luminance(b);
+    return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+  },
+
+  mix(a, b, t) {
+    const A = Color.rgb(a);
+    const B = Color.rgb(b);
+    return Color.toHex(A.map((v, i) => v * t + B[i] * (1 - t)));
+  },
+
+  rgba(hex, alpha) {
+    const [r, g, b] = Color.rgb(hex);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  },
+
+  // Softest blend of `fg` towards `bg` that still meets WCAG AA (4.5:1).
+  soft(fg, bg) {
+    let t = 0.66;
+    let soft = Color.mix(fg, bg, t);
+    while (Color.contrast(soft, bg) < 4.6 && t < 1) {
+      t = Math.min(1, t + 0.02);
+      soft = Color.mix(fg, bg, t);
+    }
+    return soft;
+  },
+
+  // Ink or cream text — whichever reads better on this background.
+  chapter(bg) {
+    const { ink, cream, accent } = PALETTE;
+    const fg = Color.contrast(ink, bg) >= Color.contrast(cream, bg) ? ink : cream;
+    const dark = fg === cream;
+    const surface = dark
+      ? Color.mix(cream, bg, 0.1)
+      : (Color.luminance(bg) > 0.6 ? Color.mix(ink, bg, 0.06) : Color.mix(cream, bg, 0.45));
+    return {
+      bg,
+      fg,
+      dark,
+      soft: Color.soft(fg, bg),
+      surface,
+      surfaceSoft: Color.soft(fg, surface),
+      btnBg: fg,
+      btnFg: dark ? ink : cream,
+      track: Color.rgba(fg, 0.22),
+      line: Color.rgba(fg, 0.24),
+      accent
+    };
+  }
+};
 
 // ============================================
 // SOUND MANAGER
@@ -246,390 +435,27 @@ class SoundManager {
     setTimeout(() => this.playTone(659, 0.2, 'sine'), 300);
   }
 
-  playMystic() {
-    if (!this.enabled || !this.isReady()) return;
-
-    try {
-      const ctx = this.audioContext;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      // Містичний sweep effect
-      osc.frequency.setValueAtTime(300, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(800, ctx.currentTime + 0.5);
-
-      gain.gain.setValueAtTime(0.2, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
-
-      osc.connect(gain).connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.5);
-    } catch (e) {
-      console.warn('Mystic sound playback failed:', e);
-    }
-  }
-
   playTone(frequency, duration, type = 'sine') {
     if (!this.isReady()) return;
-    
+
     try {
       const oscillator = this.audioContext.createOscillator();
       const gainNode = this.audioContext.createGain();
-      
+
       oscillator.connect(gainNode);
       gainNode.connect(this.audioContext.destination);
-      
+
       oscillator.frequency.value = frequency;
       oscillator.type = type;
-      
+
       gainNode.gain.setValueAtTime(0.1, this.audioContext.currentTime);
       gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + duration);
-      
+
       oscillator.start(this.audioContext.currentTime);
       oscillator.stop(this.audioContext.currentTime + duration);
     } catch (e) {
       console.warn('Sound playback failed:', e);
     }
-  }
-}
-
-// ============================================
-// THEME MANAGER
-// ============================================
-
-const THEMES = {
-  light: {
-    name: 'Світла',
-    icon: '☀️',
-    primary: '#ff6b81',
-    secondary: '#9c27b0',
-    accent: '#ffd700',
-    bgGradientStart: '#fce4ec',
-    bgGradientMiddle: '#f8bbd0',
-    bgGradientEnd: '#f3e5f5',
-    glassBg: 'rgba(255, 255, 255, 0.85)',
-    glassBorder: 'rgba(255, 255, 255, 0.5)',
-    textPrimary: '#2d1b3e',
-    textSecondary: '#666'
-  },
-  dark: {
-    name: 'Темна',
-    icon: '🌙',
-    primary: '#ff6b81',
-    secondary: '#bb86fc',
-    accent: '#ffd700',
-    bgGradientStart: '#1a1a2e',
-    bgGradientMiddle: '#16213e',
-    bgGradientEnd: '#0f0f23',
-    glassBg: 'rgba(30, 30, 50, 0.85)',
-    glassBorder: 'rgba(255, 255, 255, 0.1)',
-    textPrimary: '#e0e0e0',
-    textSecondary: '#b0b0b0'
-  },
-  sunset: {
-    name: 'Захід',
-    icon: '🌅',
-    primary: '#FF6B6B',
-    secondary: '#FFD93D',
-    accent: '#6C5CE7',
-    bgGradientStart: '#FF6B6B',
-    bgGradientMiddle: '#FFB347',
-    bgGradientEnd: '#FFD93D',
-    glassBg: 'rgba(255, 255, 255, 0.8)',
-    glassBorder: 'rgba(255, 255, 255, 0.4)',
-    textPrimary: '#2d1b3e',
-    textSecondary: '#555'
-  },
-  ocean: {
-    name: 'Океан',
-    icon: '🌊',
-    primary: '#4ECDC4',
-    secondary: '#556FB5',
-    accent: '#44A08D',
-    bgGradientStart: '#e0f7fa',
-    bgGradientMiddle: '#80deea',
-    bgGradientEnd: '#b2dfdb',
-    glassBg: 'rgba(255, 255, 255, 0.85)',
-    glassBorder: 'rgba(255, 255, 255, 0.5)',
-    textPrimary: '#1a3a52',
-    textSecondary: '#4a6b7c'
-  },
-  lavender: {
-    name: 'Лаванда',
-    icon: '💜',
-    primary: '#9D84B7',
-    secondary: '#C5A3FF',
-    accent: '#E0BBE4',
-    bgGradientStart: '#f4e7ff',
-    bgGradientMiddle: '#e5d4ff',
-    bgGradientEnd: '#d1b3ff',
-    glassBg: 'rgba(255, 255, 255, 0.85)',
-    glassBorder: 'rgba(255, 255, 255, 0.5)',
-    textPrimary: '#3d2951',
-    textSecondary: '#6d5b7b'
-  },
-  roseGold: {
-    name: 'Рожеве золото',
-    icon: '✨',
-    primary: '#E8B4B8',
-    secondary: '#D4A5A5',
-    accent: '#F5CBA7',
-    bgGradientStart: '#ffeef0',
-    bgGradientMiddle: '#ffe4e6',
-    bgGradientEnd: '#ffd6d9',
-    glassBg: 'rgba(255, 255, 255, 0.9)',
-    glassBorder: 'rgba(255, 255, 255, 0.6)',
-    textPrimary: '#5d3a3a',
-    textSecondary: '#8a6969'
-  },
-  midnight: {
-    name: 'Опівніч',
-    icon: '🌌',
-    primary: '#667EEA',
-    secondary: '#764BA2',
-    accent: '#F093FB',
-    bgGradientStart: '#0f0c29',
-    bgGradientMiddle: '#302b63',
-    bgGradientEnd: '#24243e',
-    glassBg: 'rgba(20, 20, 40, 0.85)',
-    glassBorder: 'rgba(255, 255, 255, 0.15)',
-    textPrimary: '#e8e8ff',
-    textSecondary: '#b8b8d0'
-  },
-  mystic: {
-    name: 'Місячна магія',
-    icon: '🔮',
-    primary: '#B565D8',
-    secondary: '#FFD700',
-    accent: '#E0C3FC',
-    bgGradientStart: '#2D1B40',
-    bgGradientMiddle: '#6B2E8C',
-    bgGradientEnd: '#2D1B40',
-    glassBg: 'rgba(181, 101, 216, 0.15)',
-    glassBorder: 'rgba(181, 101, 216, 0.35)',
-    textPrimary: '#F0E6FF',
-    textSecondary: '#C8B8D4',
-    glow: '0 0 25px rgba(181, 101, 216, 0.6), 0 0 50px rgba(181, 101, 216, 0.4)',
-    particleColor: '#FFD700'
-  }
-};
-
-class ThemeManager {
-  constructor() {
-    const savedTheme = localStorage.getItem(CONFIG.THEME_KEY);
-
-    // Migrate from old light/dark system
-    if (savedTheme === 'light' || savedTheme === 'dark') {
-      this.currentTheme = savedTheme;
-    } else if (savedTheme && THEMES[savedTheme]) {
-      this.currentTheme = savedTheme;
-    } else {
-      this.currentTheme = 'mystic';
-    }
-
-    // Legacy support
-    this.isDark = this.currentTheme === 'dark' || this.currentTheme === 'midnight' || this.currentTheme === 'mystic';
-  }
-
-  init() {
-    this.apply();
-  }
-
-  toggle() {
-    // Simple toggle between light and dark for backward compatibility
-    this.currentTheme = this.currentTheme === 'dark' ? 'light' : 'dark';
-    this.isDark = this.currentTheme === 'dark';
-    localStorage.setItem(CONFIG.THEME_KEY, this.currentTheme);
-    this.apply();
-    return this.isDark;
-  }
-
-  setTheme(themeName) {
-    if (!THEMES[themeName]) {
-      console.error('Theme not found:', themeName);
-      return false;
-    }
-
-    this.currentTheme = themeName;
-    this.isDark = themeName === 'dark' || themeName === 'midnight' || themeName === 'mystic';
-    localStorage.setItem(CONFIG.THEME_KEY, themeName);
-    this.apply();
-    return true;
-  }
-
-  apply() {
-    const theme = THEMES[this.currentTheme];
-    if (!theme) return;
-
-    // Apply data-theme attribute with actual theme name for mystic styles
-    document.documentElement.setAttribute('data-theme', this.currentTheme);
-
-    // Apply CSS variables for the selected theme
-    const root = document.documentElement;
-    root.style.setProperty('--color-primary', theme.primary);
-    root.style.setProperty('--color-secondary', theme.secondary);
-    root.style.setProperty('--color-accent', theme.accent);
-    root.style.setProperty('--bg-gradient-start', theme.bgGradientStart);
-    root.style.setProperty('--bg-gradient-middle', theme.bgGradientMiddle);
-    root.style.setProperty('--bg-gradient-end', theme.bgGradientEnd);
-    root.style.setProperty('--glass-bg', theme.glassBg);
-    root.style.setProperty('--glass-border', theme.glassBorder);
-    root.style.setProperty('--text-primary', theme.textPrimary);
-    root.style.setProperty('--text-secondary', theme.textSecondary);
-
-    // Apply mystic-specific properties if they exist
-    if (theme.glow) {
-      root.style.setProperty('--mystic-glow', theme.glow);
-    }
-    if (theme.particleColor) {
-      root.style.setProperty('--mystic-particle-color', theme.particleColor);
-    }
-  }
-
-  getCurrentTheme() {
-    return this.currentTheme;
-  }
-
-  getThemeList() {
-    return Object.entries(THEMES).map(([key, theme]) => ({
-      key,
-      name: theme.name,
-      icon: theme.icon
-    }));
-  }
-}
-
-// ============================================
-// PARTICLES EFFECT
-// ============================================
-
-class ParticlesEffect {
-  constructor(container) {
-    this.container = container;
-    this.particles = [];
-    this.animationId = null;
-    this.mousePos = { x: -1000, y: -1000 };
-    this.setupMouseTracking();
-  }
-
-  init() {
-    this.createParticles(30);
-    this.animate();
-  }
-
-  setupMouseTracking() {
-    // Skip on touch devices for performance
-    if ('ontouchstart' in window) return;
-
-    document.addEventListener('mousemove', (e) => {
-      this.mousePos.x = e.clientX;
-      this.mousePos.y = e.clientY;
-      this.updateParticlePositions();
-    });
-  }
-
-  updateParticlePositions() {
-    this.particles.forEach((particle, index) => {
-      const rect = particle.getBoundingClientRect();
-      const particleX = rect.left + rect.width / 2;
-      const particleY = rect.top + rect.height / 2;
-
-      const distance = Math.hypot(
-        this.mousePos.x - particleX,
-        this.mousePos.y - particleY
-      );
-
-      const interactionRadius = 150;
-
-      if (distance < interactionRadius) {
-        const angle = Math.atan2(
-          particleY - this.mousePos.y,
-          particleX - this.mousePos.x
-        );
-        const force = (interactionRadius - distance) / interactionRadius;
-        const offsetX = Math.cos(angle) * force * 40;
-        const offsetY = Math.sin(angle) * force * 40;
-        const scale = 1 + force * 0.5;
-
-        particle.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
-        particle.style.transition = 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)';
-      } else {
-        particle.style.transform = '';
-        particle.style.transition = 'transform 0.5s ease-out';
-      }
-    });
-  }
-
-  createParticles(count) {
-    const symbols = ['✨', '💫', '⭐', '🌟', '🎈', '🎀', '🌸'];
-
-    for (let i = 0; i < count; i++) {
-      const particle = document.createElement('span');
-      particle.className = 'particle';
-      particle.textContent = Utils.randomItem(symbols);
-      particle.style.cssText = `
-        left: ${Math.random() * 100}%;
-        top: ${Math.random() * 100}%;
-        animation-delay: ${Math.random() * 5}s;
-        animation-duration: ${5 + Math.random() * 10}s;
-        font-size: ${0.8 + Math.random() * 1.2}rem;
-        opacity: ${0.3 + Math.random() * 0.4};
-      `;
-      this.container.appendChild(particle);
-      this.particles.push(particle);
-    }
-  }
-
-  animate() {
-    // Particles are animated via CSS, this method is just a placeholder
-    // to satisfy the init() call
-  }
-
-  destroy() {
-    this.particles.forEach(p => p.remove());
-    this.particles = [];
-    if (this.animationId) {
-      cancelAnimationFrame(this.animationId);
-    }
-  }
-}
-
-// ============================================
-// TRANSITION MANAGER
-// ============================================
-
-class TransitionManager {
-  static async transition(fromElement, toElement, type = 'slide') {
-    if (!fromElement || !toElement) return;
-
-    const duration = 600; // ms
-
-    // Apply exit animation
-    fromElement.classList.add(`transition-${type}-out`);
-
-    await this.wait(duration / 2);
-
-    // Switch visibility
-    fromElement.classList.remove('active');
-    toElement.classList.add('active');
-
-    // Apply enter animation
-    toElement.classList.add(`transition-${type}-in`);
-
-    await this.wait(duration / 2);
-
-    // Cleanup
-    fromElement.classList.remove(`transition-${type}-out`);
-    toElement.classList.remove(`transition-${type}-in`);
-  }
-
-  static wait(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  static getRandomTransition() {
-    const types = ['slide', 'fade', 'zoom', 'flip'];
-    return types[Math.floor(Math.random() * types.length)];
   }
 }
 
@@ -700,20 +526,27 @@ const CONVERSATION_TOPICS = {
 };
 
 // ============================================
-// CONVERSATION TOPICS COMPONENT
+// CONVERSATION TOPICS (inline card on the wait screen)
 // ============================================
+
+const TOPIC_CATEGORIES = [
+  ['fun', 'Веселі'],
+  ['deep', 'Глибокі'],
+  ['unusual', 'Незвичайні'],
+  ['icebreakers', 'Для початку']
+];
 
 class ConversationTopics {
   constructor() {
-    this.element = null;
-    this.currentCategory = 'fun';
-    this.currentTopicIndex = 0;
-    this.favorites = this.loadFavorites();
+    this.category = 'fun';
+    this.key = null; // "category-index" of the question on screen
     this.usedTopics = new Set();
+    this.favorites = this.loadFavorites();
+    this.element = null;
   }
 
   // Favourites are stored as "category-index" keys; drop any that no longer
-  // point at an existing topic (e.g. the removed category) or are corrupted.
+  // point at an existing topic (e.g. a removed category) or are corrupted.
   loadFavorites() {
     try {
       const raw = JSON.parse(localStorage.getItem(CONFIG.FAVORITES_KEY) || '[]');
@@ -730,254 +563,117 @@ class ConversationTopics {
     return topics?.[Number(index)] ?? null;
   }
 
-  render() {
-    // Create toggle button
-    const toggleBtn = document.createElement('button');
-    toggleBtn.className = 'topics-toggle-btn';
-    toggleBtn.innerHTML = '💬';
-    toggleBtn.setAttribute('aria-label', 'Ідеї для розмови');
-
-    // Create panel
-    const panel = document.createElement('div');
-    panel.className = 'conversation-topics glass-card';
-    panel.innerHTML = `
-      <div class="topics-header">
-        <h3 class="topics-title">💬 Ідеї для розмови</h3>
-        <p class="topics-subtitle">Якщо раптом не знаєте, про що поговорити…</p>
+  render({ fresh = false } = {}) {
+    const card = document.createElement('section');
+    card.className = 'topic-card';
+    card.setAttribute('aria-label', 'Ідеї для розмови');
+    card.innerHTML = `
+      <div class="topic-head">
+        <p class="topic-title">Ідеї для розмови</p>
+        <p class="topic-sub">Якщо раптом не знаєте, про що поговорити…</p>
       </div>
-
-      <div class="topics-categories">
-        <button class="topic-category-btn active" data-category="fun">
-          😄 Веселі
+      <div class="chips" role="group" aria-label="Тема"></div>
+      <p class="topic-text"></p>
+      <div class="topic-actions">
+        <button class="btn-quiet topic-next" type="button">
+          ${Utils.icon('refresh')}<span>Інше питання</span>
         </button>
-        <button class="topic-category-btn" data-category="deep">
-          💭 Глибокі
-        </button>
-        <button class="topic-category-btn" data-category="unusual">
-          🎲 Незвичайні
-        </button>
-        <button class="topic-category-btn" data-category="icebreakers">
-          🧊 Для початку
-        </button>
-      </div>
-
-      <div class="topic-card-container">
-        <div class="topic-card mystic-card">
-          <div class="topic-content">
-            <p class="topic-text"></p>
-          </div>
-          <button class="topic-favorite-btn" aria-label="Додати до улюблених">
-            <i class="fas fa-star"></i>
-          </button>
-        </div>
-      </div>
-
-      <div class="topics-actions">
-        <button class="btn btn-outline topic-next-btn">
-          <i class="fas fa-sync-alt"></i>
-          <span>Наступна тема</span>
-        </button>
-        <button class="btn btn-secondary topic-favorites-btn">
-          <i class="fas fa-star"></i>
-          <span>Улюблені (<span class="favorites-count">0</span>)</span>
+        <button class="icon-btn star-btn" type="button" aria-pressed="false" aria-label="Додати до улюблених">
+          ${Utils.icon('star')}
         </button>
       </div>
     `;
+    this.element = card;
 
-    // Create wrapper with proper styling
-    const wrapper = document.createElement('div');
-    wrapper.style.display = 'flex';
-    wrapper.style.flexDirection = 'column';
-    wrapper.style.alignItems = 'flex-end';
-    wrapper.appendChild(toggleBtn);
-    wrapper.appendChild(panel);
-
-    this.element = panel;
-    this.toggleBtn = toggleBtn;
-
-    // Toggle button click handler
-    toggleBtn.addEventListener('click', () => {
-      panel.classList.toggle('open');
-      Utils.vibrate(30);
+    card.querySelector('.topic-next').addEventListener('click', () => {
+      this.next();
+      Utils.vibrate(20);
     });
+    card.querySelector('.star-btn').addEventListener('click', () => this.toggleFavorite());
 
-    this.bindEvents();
-    this.showRandomTopic();
-    this.updateFavoritesCount();
-
-    return wrapper;
+    this.renderChips();
+    if (!fresh && this.key && this.getTopicByKey(this.key) !== null) {
+      this.showKey(this.key, false);
+    } else {
+      this.next();
+    }
+    return card;
   }
 
-  bindEvents() {
-    // Category buttons
-    const categoryBtns = this.element.querySelectorAll('.topic-category-btn');
-    categoryBtns.forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        categoryBtns.forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        this.currentCategory = btn.dataset.category;
-        this.showRandomTopic();
+  renderChips() {
+    const chips = this.element?.querySelector('.chips');
+    if (!chips) return;
+    const list = [...TOPIC_CATEGORIES];
+    if (this.favorites.length) list.push(['favorites', `★ Улюблені · ${this.favorites.length}`]);
+    if (this.category === 'favorites' && !this.favorites.length) this.category = 'fun';
+
+    chips.innerHTML = list.map(([id, label]) =>
+      `<button class="chip" type="button" data-category="${id}" aria-pressed="${id === this.category}">${label}</button>`
+    ).join('');
+    chips.querySelectorAll('.chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        this.category = chip.dataset.category;
+        chips.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', String(c === chip)));
+        this.next();
       });
     });
-
-    // Next topic button
-    const nextBtn = this.element.querySelector('.topic-next-btn');
-    nextBtn.addEventListener('click', () => {
-      this.showRandomTopic();
-      Utils.vibrate(30);
-    });
-
-    // Favorite button
-    const favBtn = this.element.querySelector('.topic-favorite-btn');
-    favBtn.addEventListener('click', () => {
-      this.toggleFavorite();
-    });
-
-    // Favorites button
-    const favsBtn = this.element.querySelector('.topic-favorites-btn');
-    favsBtn.addEventListener('click', () => {
-      this.showFavorites();
-    });
   }
 
-  showRandomTopic() {
-    const category = this.currentCategory;
-    const topics = CONVERSATION_TOPICS[category];
-    const allIndexes = topics.map((_, index) => index);
-    let availableIndexes = allIndexes.filter(index =>
-      !this.usedTopics.has(`${category}-${index}`)
-    );
-
-    // Якщо всі теми категорії вже були, починаємо коло спочатку
-    if (availableIndexes.length === 0) {
-      allIndexes.forEach(index => this.usedTopics.delete(`${category}-${index}`));
-      availableIndexes = allIndexes;
+  next() {
+    let keys;
+    if (this.category === 'favorites') {
+      keys = [...this.favorites];
+    } else {
+      keys = CONVERSATION_TOPICS[this.category].map((_, i) => `${this.category}-${i}`);
     }
+    if (!keys.length) return;
 
-    const randomIndex = Utils.randomItem(availableIndexes);
-    const topic = topics[randomIndex];
+    let available = keys.filter(k => !this.usedTopics.has(k) && k !== this.key);
+    if (!available.length) {
+      keys.forEach(k => this.usedTopics.delete(k));
+      available = keys.length > 1 ? keys.filter(k => k !== this.key) : keys;
+    }
+    const key = Utils.randomItem(available);
+    this.usedTopics.add(key);
+    this.showKey(key, true);
+  }
 
-    this.usedTopics.add(`${this.currentCategory}-${randomIndex}`);
-    this.currentTopicIndex = randomIndex;
+  showKey(key, animate) {
+    this.key = key;
+    const text = this.element?.querySelector('.topic-text');
+    if (!text) return;
+    text.textContent = this.getTopicByKey(key);
+    if (animate) Utils.restartAnimation(text, 'tick');
+    this.updateStar();
+  }
 
-    const topicText = this.element.querySelector('.topic-text');
-    const topicCard = this.element.querySelector('.topic-card');
-
-    // Анімація зміни тексту
-    topicCard.style.opacity = '0';
-    topicCard.style.transform = 'scale(0.95)';
-
-    setTimeout(() => {
-      topicText.textContent = topic;
-      topicCard.style.opacity = '1';
-      topicCard.style.transform = 'scale(1)';
-      this.updateFavoriteButton();
-    }, 200);
+  updateStar() {
+    const btn = this.element?.querySelector('.star-btn');
+    if (!btn) return;
+    const on = this.favorites.includes(this.key);
+    btn.classList.toggle('is-on', on);
+    btn.setAttribute('aria-pressed', String(on));
+    btn.setAttribute('aria-label', on ? 'Прибрати з улюблених' : 'Додати до улюблених');
   }
 
   toggleFavorite() {
-    const topic = CONVERSATION_TOPICS[this.currentCategory][this.currentTopicIndex];
-    const favoriteKey = `${this.currentCategory}-${this.currentTopicIndex}`;
-
-    const index = this.favorites.indexOf(favoriteKey);
+    if (!this.key) return;
+    const index = this.favorites.indexOf(this.key);
     if (index > -1) {
       this.favorites.splice(index, 1);
-      Toast.show('Видалено з улюблених', 'info');
+      Toast.show('Прибрано з улюблених');
     } else {
-      this.favorites.push(favoriteKey);
-      Toast.show('Додано до улюблених!', 'success');
-      Utils.vibrate([50, 30, 50]);
+      this.favorites.push(this.key);
+      Toast.show('Додано до улюблених ★');
+      Utils.vibrate([40, 30, 40]);
     }
-
-    localStorage.setItem(CONFIG.FAVORITES_KEY, JSON.stringify(this.favorites));
-    this.updateFavoriteButton();
-    this.updateFavoritesCount();
-  }
-
-  updateFavoriteButton() {
-    const favoriteKey = `${this.currentCategory}-${this.currentTopicIndex}`;
-    const isFavorite = this.favorites.includes(favoriteKey);
-    const favBtn = this.element.querySelector('.topic-favorite-btn');
-
-    if (isFavorite) {
-      favBtn.classList.add('active');
-      favBtn.innerHTML = '<i class="fas fa-star"></i>';
-    } else {
-      favBtn.classList.remove('active');
-      favBtn.innerHTML = '<i class="far fa-star"></i>';
+    try {
+      localStorage.setItem(CONFIG.FAVORITES_KEY, JSON.stringify(this.favorites));
+    } catch (e) {
+      // storage full/unavailable — favourites just won't persist
     }
-  }
-
-  updateFavoritesCount() {
-    const countEl = this.element.querySelector('.favorites-count');
-    countEl.textContent = this.favorites.length;
-  }
-
-  showFavorites() {
-    if (this.favorites.length === 0) {
-      Toast.show('Улюблених тем поки немає — тисни ⭐ біля питання', 'info');
-      return;
-    }
-
-    // Показати модальне вікно з улюбленими темами
-    const favoritesHtml = this.favorites.map(key => {
-      const [category] = key.split('-');
-      const topic = this.getTopicByKey(key);
-      if (topic === null) return '';
-      return `<div class="favorite-item">
-        <span class="favorite-emoji">${this.getCategoryEmoji(category)}</span>
-        <p>${topic}</p>
-      </div>`;
-    }).join('');
-
-    const modal = document.createElement('div');
-    modal.className = 'topics-modal';
-    modal.innerHTML = `
-      <div class="topics-modal-content glass-card">
-        <button class="topics-modal-close">&times;</button>
-        <h3>⭐ Улюблені теми</h3>
-        <div class="favorites-list">${favoritesHtml}</div>
-      </div>
-    `;
-
-    document.body.appendChild(modal);
-    setTimeout(() => modal.classList.add('active'), 10);
-
-    modal.querySelector('.topics-modal-close').addEventListener('click', () => {
-      modal.classList.remove('active');
-      setTimeout(() => modal.remove(), 300);
-    });
-
-    modal.addEventListener('click', (e) => {
-      if (e.target === modal) {
-        modal.classList.remove('active');
-        setTimeout(() => modal.remove(), 300);
-      }
-    });
-  }
-
-  getCategoryEmoji(category) {
-    const emojis = {
-      fun: '😄',
-      deep: '💭',
-      unusual: '🎲',
-      icebreakers: '🧊'
-    };
-    return emojis[category] || '💬';
-  }
-
-  show() {
-    const container = Utils.$('#conversationTopicsContainer');
-    if (container) {
-      container.classList.add('visible');
-    }
-  }
-
-  hide() {
-    const container = Utils.$('#conversationTopicsContainer');
-    if (container) {
-      container.classList.remove('visible');
-    }
+    this.renderChips();
+    this.updateStar();
   }
 }
 
@@ -986,34 +682,19 @@ class ConversationTopics {
 // ============================================
 
 class Toast {
-  static show(message, type = 'info', duration = 3000) {
+  static show(message, type = 'info', duration = 2600) {
     const container = Utils.$('#toastContainer');
     if (!container) return;
 
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
-    
-    const icons = {
-      success: 'fa-check-circle',
-      error: 'fa-exclamation-circle',
-      info: 'fa-info-circle',
-      warning: 'fa-exclamation-triangle'
-    };
-
-    toast.innerHTML = `
-      <i class="fas ${icons[type] || icons.info}"></i>
-      <span>${message}</span>
-    `;
-
+    toast.textContent = message;
     container.appendChild(toast);
-    
-    requestAnimationFrame(() => {
-      toast.classList.add('show');
-    });
 
+    requestAnimationFrame(() => toast.classList.add('show'));
     setTimeout(() => {
       toast.classList.remove('show');
-      setTimeout(() => toast.remove(), 300);
+      setTimeout(() => toast.remove(), 250);
     }, duration);
   }
 }
@@ -1025,21 +706,19 @@ class Toast {
 class StateManager {
   constructor() {
     this.state = this.getDefaultState();
-    this.listeners = new Set();
   }
 
   getDefaultState() {
     return {
       userId: localStorage.getItem(CONFIG.USER_ID_KEY) || this.createUserId(),
-      currentStep: 'intro-1',
+      introStep: 0,
       introCompleted: false,
-      stages: DATE_OPTIONS.stages.map((_, index) => ({
+      stages: DATE_OPTIONS.stages.map(() => ({
         selectedIndex: null,
         confirmed: false,
-        unlockTime: index === 0 ? 0 : null,
         rerollsUsed: 0
       })),
-      lastActiveStage: 0,
+      // waiting for: a stage index (opens it), 'farewell' (final screen) or null
       pendingStage: null,
       pendingUnlockTime: null,
       farewellReached: false,
@@ -1049,7 +728,7 @@ class StateManager {
   }
 
   createUserId() {
-    const id = Utils.generateId();
+    const id = `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
     localStorage.setItem(CONFIG.USER_ID_KEY, id);
     return id;
   }
@@ -1093,26 +772,33 @@ class StateManager {
       return {
         selectedIndex,
         confirmed: Boolean(s.confirmed) && selectedIndex !== null,
-        unlockTime: typeof s.unlockTime === 'number' ? s.unlockTime : defaults.stages[index].unlockTime,
         rerollsUsed: Number.isInteger(s.rerollsUsed) && s.rerollsUsed > 0 ? s.rerollsUsed : 0
       };
     });
 
-    const pendingStage = parsed.pendingStage === 'farewell' ||
-      (Number.isInteger(parsed.pendingStage) && parsed.pendingStage > 0 && parsed.pendingStage < stages.length)
-      ? parsed.pendingStage : null;
+    const allConfirmed = stages.every(s => s.confirmed);
+    let pendingStage = null;
+    if (parsed.pendingStage === 'farewell' && allConfirmed) {
+      pendingStage = 'farewell';
+    } else if (Number.isInteger(parsed.pendingStage) && parsed.pendingStage > 0 &&
+      parsed.pendingStage < stages.length && stages[parsed.pendingStage - 1].confirmed &&
+      !stages[parsed.pendingStage].confirmed) {
+      pendingStage = parsed.pendingStage;
+    }
     const pendingUnlockTime = pendingStage !== null && typeof parsed.pendingUnlockTime === 'number'
       ? parsed.pendingUnlockTime : null;
 
+    const introCompleted = Boolean(parsed.introCompleted);
+    const introStep = Number.isInteger(parsed.introStep) && parsed.introStep >= 0 ? parsed.introStep : 0;
+
     return {
       ...defaults,
-      currentStep: typeof parsed.currentStep === 'string' ? parsed.currentStep : defaults.currentStep,
-      introCompleted: Boolean(parsed.introCompleted),
+      introStep,
+      introCompleted,
       stages,
-      lastActiveStage: Number.isInteger(parsed.lastActiveStage) ? parsed.lastActiveStage : 0,
       pendingStage: pendingUnlockTime === null ? null : pendingStage,
       pendingUnlockTime,
-      farewellReached: Boolean(parsed.farewellReached),
+      farewellReached: Boolean(parsed.farewellReached) && allConfirmed && introCompleted,
       finishedAt: typeof parsed.finishedAt === 'number' ? parsed.finishedAt : null,
       rating: typeof parsed.rating === 'string' ? parsed.rating : null
     };
@@ -1121,7 +807,6 @@ class StateManager {
   save() {
     try {
       localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(this.state));
-      this.notify();
     } catch (e) {
       console.error('Error saving state:', e);
     }
@@ -1143,15 +828,6 @@ class StateManager {
     this.update({ stages });
   }
 
-  subscribe(listener) {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
-
-  notify() {
-    this.listeners.forEach(listener => listener(this.state));
-  }
-
   get(key) {
     return this.state[key];
   }
@@ -1160,86 +836,13 @@ class StateManager {
     return this.state.stages[index];
   }
 
-  isStageConfirmed(index) {
-    return this.state.stages[index]?.confirmed ?? false;
-  }
-
   getRerollsLeft(index) {
     const used = this.state.stages[index]?.rerollsUsed ?? 0;
     return Math.max(0, CONFIG.MAX_REROLLS - used);
   }
 
-  isStageUnlocked(index) {
-    const stage = this.state.stages[index];
-    if (!stage) return false;
-    if (index === 0) return true;
-    if (stage.unlockTime === null) return false;
-    return Date.now() >= stage.unlockTime;
-  }
-
-  getNextUnconfirmedStage() {
-    return this.state.stages.findIndex(s => !s.confirmed);
-  }
-
   areAllStagesConfirmed() {
     return this.state.stages.every(s => s.confirmed);
-  }
-
-  clearAll() {
-    localStorage.removeItem(CONFIG.STORAGE_KEY);
-    this.reset();
-  }
-}
-
-// ============================================
-// PROGRESS BAR
-// ============================================
-
-class ProgressBar {
-  constructor(container, stageCount) {
-    this.container = container;
-    this.stageCount = stageCount;
-    this.steps = [];
-  }
-
-  init() {
-    this.container.innerHTML = '<div class="progress-line"></div>';
-    
-    for (let i = 0; i < this.stageCount; i++) {
-      const step = document.createElement('div');
-      step.className = 'progress-step';
-      step.dataset.index = i;
-      step.innerHTML = `
-        <div class="step-circle">
-          <span class="step-number">${i + 1}</span>
-          <i class="fas fa-check step-check"></i>
-        </div>
-        <span class="step-label">🔒</span>
-      `;
-      this.container.appendChild(step);
-      this.steps.push(step);
-    }
-  }
-
-  // Locked stages stay a secret: the stage emoji is shown only once unlocked.
-  revealStep(index) {
-    const label = this.steps[index]?.querySelector('.step-label');
-    if (label) label.textContent = DATE_OPTIONS.stages[index].emoji;
-  }
-
-  updateStep(index, completed) {
-    const step = this.steps[index];
-    if (step) {
-      step.classList.toggle('completed', completed);
-    }
-  }
-
-  show() {
-    this.container.classList.add('visible');
-  }
-
-  hide() {
-    this.container.classList.remove('visible');
   }
 }
 
@@ -1248,30 +851,19 @@ class ProgressBar {
 // ============================================
 
 class Timer {
-  constructor(element, conversationTopics = null) {
-    this.element = element;
-    this.textElement = element.querySelector('.timer-text');
-    this.labelElement = element.querySelector('.timer-label');
+  constructor() {
     this.intervalId = null;
     this.unlockTime = null;
     this.onComplete = null;
-    this.conversationTopics = conversationTopics;
+    this.onTick = null;
   }
 
-  start(unlockTime, onComplete, label = '') {
+  start(unlockTime, { onTick = null, onComplete = null } = {}) {
     this.stop();
     this.unlockTime = unlockTime;
+    this.onTick = onTick;
     this.onComplete = onComplete;
-    if (this.labelElement) this.labelElement.textContent = label;
-
-    this.element.classList.add('active');
-
-    // Show conversation topics when timer starts
-    if (this.conversationTopics) {
-      this.conversationTopics.show();
-    }
-
-    this.intervalId = setInterval(() => this.update(), 1000);
+    this.intervalId = setInterval(() => this.update(), 250);
     this.update();
   }
 
@@ -1298,13 +890,11 @@ class Timer {
 
   update() {
     const remaining = this.unlockTime - Date.now();
-
     if (remaining <= 0) {
       this.complete();
       return;
     }
-
-    this.textElement.textContent = Utils.formatTime(remaining);
+    if (this.onTick) this.onTick(remaining);
   }
 
   stop() {
@@ -1313,986 +903,306 @@ class Timer {
       this.intervalId = null;
     }
     this.onComplete = null;
-    this.element.classList.remove('active');
-
-    // Hide conversation topics when timer stops
-    if (this.conversationTopics) {
-      this.conversationTopics.hide();
-    }
+    this.onTick = null;
   }
 }
 
 // ============================================
-// GRID STAGE COMPONENT (Новий дизайн з сіткою)
+// DECK — the visible "draw" of a random option
 // ============================================
 
-class GridStageComponent {
-  constructor(stageData, index, options = {}) {
-    this.data = stageData;
-    this.index = index;
-    this.options = options;
-    this.element = null;
-    this.selectedIndex = null;
-  }
+const REST_ANGLES = [-6, 5, -3, 7, -5, 4];
 
-  render() {
-    const stage = document.createElement('section');
-    stage.className = 'stage-card glass-card locked grid-mode';
-    stage.dataset.index = this.index;
-    stage.id = `stage-${this.index}`;
-
-    stage.innerHTML = `
-      <div class="card-glow"></div>
-
-      <header class="stage-header modern">
-        <div class="stage-icon-wrapper">
-          <div class="stage-icon modern">
-            <i class="fas ${this.data.icon}"></i>
-          </div>
-          <span class="stage-emoji-large">${this.data.emoji}</span>
-        </div>
-        <div class="stage-title-wrapper">
-          <h2 class="stage-title modern">${this.data.question}</h2>
-          <p class="stage-subtitle">Обери один варіант:</p>
-        </div>
-      </header>
-
-      <div class="stage-content grid-content">
-        <div class="options-grid">
-          ${this.renderOptionsGrid()}
-        </div>
-
-        <div class="stage-actions modern">
-          <button class="btn btn-confirm-modern" disabled>
-            <i class="fas fa-check-circle"></i>
-            <span>Підтвердити вибір</span>
-          </button>
-        </div>
-      </div>
-
-      <div class="stage-lock-overlay">
-        <i class="fas fa-lock"></i>
-        <p>Очікування...</p>
-      </div>
-    `;
-
-    this.element = stage;
-    this.bindEvents();
-    return stage;
-  }
-
-  renderOptionsGrid() {
-    return this.data.options.map((option, index) => `
-      <div class="option-card" data-index="${index}">
-        <div class="option-card-inner">
-          <div class="option-image-wrapper">
-            <img src="${option.image}" alt="${option.text}" class="option-image">
-            <div class="option-overlay">
-              <i class="fas fa-check-circle option-check"></i>
-            </div>
-          </div>
-          <div class="option-info">
-            <h3 class="option-title">${option.text}</h3>
-            <div class="option-badge">
-              <i class="fas fa-heart"></i>
-            </div>
-          </div>
-        </div>
-      </div>
-    `).join('');
-  }
-
-  bindEvents() {
-    const optionCards = this.element.querySelectorAll('.option-card');
-    const confirmBtn = this.element.querySelector('.btn-confirm-modern');
-
-    optionCards.forEach((card, index) => {
-      card.addEventListener('click', () => {
-        if (this.element.classList.contains('locked')) return;
-
-        this.selectOption(index);
-        this.options.soundManager?.playClick();
-        Utils.vibrate(50);
-      });
-    });
-
-    confirmBtn.addEventListener('click', () => {
-      if (this.selectedIndex !== null) {
-        this.confirm();
-      }
+class Deck {
+  constructor(deckEl, nameEl, stage, sound) {
+    this.el = deckEl;
+    this.nameEl = nameEl;
+    this.stage = stage;
+    this.sound = sound;
+    this.top = null;
+    this.z = 1;
+    this.cards = stage.options.map((option, index) => {
+      const card = createPhoto(option, stage, 'deck-card');
+      card.style.setProperty('--rot', `${REST_ANGLES[index % REST_ANGLES.length]}deg`);
+      card.style.zIndex = String(index + 1);
+      this.el.appendChild(card);
+      return card;
     });
   }
 
-  selectOption(index) {
-    this.selectedIndex = index;
-
-    // Remove selection from all cards
-    const cards = this.element.querySelectorAll('.option-card');
-    cards.forEach(card => card.classList.remove('selected'));
-
-    // Add selection to clicked card
-    cards[index].classList.add('selected');
-
-    // Enable confirm button
-    const confirmBtn = this.element.querySelector('.btn-confirm-modern');
-    confirmBtn.disabled = false;
-
-    // Save to state
-    if (this.options.onSpin) {
-      this.options.onSpin(this.index, index);
+  bringToTop(index, dealMs = 0) {
+    const card = this.cards[index];
+    if (!card) return;
+    if (this.top !== null && this.top !== index) this.cards[this.top].classList.remove('is-top');
+    this.z += 1;
+    card.style.zIndex = String(this.z);
+    card.classList.add('is-top');
+    card.classList.remove('settle');
+    if (dealMs > 0) {
+      card.style.setProperty('--deal-ms', `${Math.round(dealMs)}ms`);
+      Utils.restartAnimation(card, 'deal');
     }
+    this.top = index;
   }
 
-  confirm() {
-    const { onConfirm, soundManager } = this.options;
+  setName(index, animate = false) {
+    this.nameEl.textContent = this.stage.options[index].text;
+    Utils.fit(this.nameEl, 18);
+    if (animate) Utils.restartAnimation(this.nameEl, 'tick');
+  }
 
-    this.element.classList.add('confirmed');
-    soundManager?.playSuccess();
-    Utils.vibrate([100, 50, 100]);
+  showInstant(index) {
+    this.bringToTop(index);
+    this.setName(index);
+  }
 
-    // Trigger confetti
-    if (typeof confetti === 'function') {
-      confetti({
-        particleCount: 150,
-        spread: 90,
-        origin: { y: 0.6 },
-        colors: ['#ff6b81', '#ffd700', '#9c27b0', '#ff9ff3']
-      });
+  // Cycles through the options in a fixed shuffled order, slowing down,
+  // and lands exactly on `target` (which was decided and saved beforehand).
+  buildSequence(target) {
+    const n = this.cards.length;
+    const order = Utils.shuffled(this.cards.map((_, i) => i));
+    let pos = this.top === null ? -1 : order.indexOf(this.top);
+    const seq = [];
+    const minTicks = 13 + Math.floor(Math.random() * n);
+    while (seq.length < minTicks || seq[seq.length - 1] !== target) {
+      pos = (pos + 1) % n;
+      seq.push(order[pos]);
+    }
+    return seq;
+  }
+
+  buildIntervals(count) {
+    const raw = [];
+    for (let k = 0; k < count; k++) {
+      const t = count > 1 ? k / (count - 1) : 1;
+      raw.push(45 + 340 * Math.pow(t, 2.2));
+    }
+    const total = raw.slice(0, -1).reduce((a, b) => a + b, 0) || 1;
+    const scale = CONFIG.SHUFFLE_MS / total;
+    return raw.map(v => v * scale);
+  }
+
+  async shuffleTo(target) {
+    const option = this.stage.options[target];
+    const imageReady = Utils.loadImage(option.image);
+
+    if (this.cards.length <= 1 || Utils.reducedMotion()) {
+      await Promise.race([imageReady, Utils.wait(CONFIG.IMAGE_WAIT_MS)]);
+      this.showInstant(target);
+      this.sound?.playSuccess();
+      return;
     }
 
-    if (onConfirm) {
-      onConfirm(this.index);
+    const seq = this.buildSequence(target);
+    const intervals = this.buildIntervals(seq.length);
+
+    Utils.vibrate([40, 30, 40]);
+    for (let k = 0; k < seq.length; k++) {
+      const last = k === seq.length - 1;
+      // never reveal a half-loaded picture
+      if (last) await Promise.race([imageReady, Utils.wait(CONFIG.IMAGE_WAIT_MS)]);
+      this.bringToTop(seq[k], Math.min(260, intervals[k] * 0.95));
+      this.setName(seq[k], true);
+      this.sound?.playSpin();
+      Utils.vibrate(8);
+      if (!last) await Utils.wait(intervals[k]);
     }
-  }
 
-  unlock() {
-    this.element.classList.remove('locked');
-    this.element.classList.add('unlocked');
-
-    // Animate cards appearing
-    const cards = this.element.querySelectorAll('.option-card');
-    cards.forEach((card, index) => {
-      setTimeout(() => {
-        card.classList.add('appear');
-      }, index * 100);
-    });
-
-    this.options.soundManager?.playUnlock();
-  }
-
-  lock() {
-    this.element.classList.add('locked');
-    this.element.classList.remove('unlocked');
-  }
-
-  setSelected(selectedIndex) {
-    if (selectedIndex !== null) {
-      this.selectOption(selectedIndex);
-    }
-  }
-
-  isLocked() {
-    return this.element?.classList.contains('locked') ?? true;
+    const card = this.cards[target];
+    Utils.restartAnimation(card, 'settle');
+    Utils.restartAnimation(this.nameEl, 'settle-name');
+    this.sound?.playSuccess();
+    Utils.vibrate([30, 50, 120]);
+    await Utils.wait(260);
   }
 }
 
 // ============================================
-// STAGE COMPONENT (Old design - kept for reference)
+// STORY IMAGE (1080×1920 PNG of the day)
 // ============================================
 
-class StageComponent {
-  constructor(stageData, index, options = {}) {
-    this.data = stageData;
-    this.index = index;
-    this.options = options;
-    this.element = null;
-    this.isSpinning = false;
-  }
-
-  render() {
-    const stage = document.createElement('section');
-    stage.className = 'stage-card glass-card locked';
-    stage.dataset.index = this.index;
-    stage.id = `stage-${this.index}`;
-
-    stage.innerHTML = `
-      <div class="card-glow"></div>
-      <header class="stage-header">
-        <div class="stage-icon">
-          <i class="fas ${this.data.icon}"></i>
-        </div>
-        <h2 class="stage-title">${this.data.question}</h2>
-      </header>
-
-      <div class="stage-content">
-        <div class="option-display">
-          <div class="option-image-container">
-            <img class="option-image" src="" alt="Обрана опція">
-            <div class="image-overlay"></div>
-          </div>
-          <p class="option-name"></p>
-        </div>
-
-        <div class="stage-actions">
-          <button class="btn btn-primary btn-spin">
-            <i class="fas fa-dice"></i>
-            <span>Обрати варіант</span>
-          </button>
-
-          <div class="confirm-actions">
-            <button class="btn btn-success btn-confirm">
-              <i class="fas fa-check"></i>
-              <span>Підтверджую!</span>
-            </button>
-            <button class="btn btn-outline btn-retry">
-              <i class="fas fa-redo"></i>
-              <span>Інший варіант</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div class="stage-lock-overlay">
-        <i class="fas fa-lock"></i>
-        <p>Очікування...</p>
-      </div>
-    `;
-
-    this.element = stage;
-    this.bindEvents();
-    return stage;
-  }
-
-  bindEvents() {
-    const spinBtn = this.element.querySelector('.btn-spin');
-    const confirmBtn = this.element.querySelector('.btn-confirm');
-    const retryBtn = this.element.querySelector('.btn-retry');
-
-    spinBtn.addEventListener('click', () => this.spin());
-    confirmBtn.addEventListener('click', () => this.confirm());
-    retryBtn.addEventListener('click', () => this.retry());
-  }
-
-  async spin() {
-    if (this.isSpinning) return;
-    this.isSpinning = true;
-
-    const { onSpin, soundManager } = this.options;
-    const display = this.element.querySelector('.option-display');
-    const img = this.element.querySelector('.option-image');
-    const name = this.element.querySelector('.option-name');
-    const confirmActions = this.element.querySelector('.confirm-actions');
-    const spinBtn = this.element.querySelector('.btn-spin');
-
-    spinBtn.disabled = true;
-    display.classList.add('visible', 'spinning');
-    confirmActions.classList.remove('visible');
-
-    Utils.vibrate([50, 30, 50]);
-
-    const options = this.data.options;
-    const cycles = Math.floor(CONFIG.SPIN_DURATION / CONFIG.SPIN_INTERVAL);
-    let count = 0;
-
-    await new Promise(resolve => {
-      const interval = setInterval(() => {
-        const opt = options[count % options.length];
-        img.src = opt.image;
-        name.textContent = opt.text;
-        
-        soundManager?.playSpin();
-        
-        count++;
-        
-        if (count >= cycles) {
-          clearInterval(interval);
-          resolve();
-        }
-      }, CONFIG.SPIN_INTERVAL);
-    });
-
-    // Final selection
-    const selectedIndex = Math.floor(Math.random() * options.length);
-    const selected = options[selectedIndex];
-    
-    img.src = selected.image;
-    name.textContent = selected.text;
-    
-    display.classList.remove('spinning');
-    confirmActions.classList.add('visible');
-    spinBtn.disabled = false;
-    this.isSpinning = false;
-
-    soundManager?.playSuccess();
-    Utils.vibrate(100);
-
-    if (onSpin) {
-      onSpin(this.index, selectedIndex);
-    }
-  }
-
-  confirm() {
-    const { onConfirm, soundManager } = this.options;
-    const confirmActions = this.element.querySelector('.confirm-actions');
-    const spinBtn = this.element.querySelector('.btn-spin');
-
-    confirmActions.classList.remove('visible');
-    spinBtn.classList.add('hidden');
-    this.element.classList.add('confirmed');
-
-    soundManager?.playSuccess();
-    Utils.vibrate([100, 50, 100]);
-
-    // Trigger confetti
-    if (typeof confetti === 'function') {
-      confetti({
-        particleCount: 100,
-        spread: 70,
-        origin: { y: 0.6 },
-        colors: ['#ff6b81', '#ffd700', '#9c27b0', '#ff9ff3']
-      });
-    }
-
-    if (onConfirm) {
-      onConfirm(this.index);
-    }
-  }
-
-  retry() {
-    const { onRetry } = this.options;
-    const display = this.element.querySelector('.option-display');
-    const confirmActions = this.element.querySelector('.confirm-actions');
-    const spinBtn = this.element.querySelector('.btn-spin');
-
-    display.classList.remove('visible');
-    confirmActions.classList.remove('visible');
-    spinBtn.disabled = false;
-
-    if (onRetry) {
-      onRetry(this.index);
-    }
-  }
-
-  unlock() {
-    this.element.classList.remove('locked');
-
-    // Add 3D flip animation
-    this.element.style.transformStyle = 'preserve-3d';
-    this.element.classList.add('card-flipping');
-
-    setTimeout(() => {
-      this.element.classList.add('unlocked');
-      this.element.classList.remove('card-flipping');
-    }, 400);
-
-    this.options.soundManager?.playUnlock();
-  }
-
-  lock() {
-    this.element.classList.add('locked');
-    this.element.classList.remove('unlocked');
-  }
-
-  setSelected(selectedIndex) {
-    if (selectedIndex === null) return;
-    
-    const opt = this.data.options[selectedIndex];
-    const display = this.element.querySelector('.option-display');
-    const img = this.element.querySelector('.option-image');
-    const name = this.element.querySelector('.option-name');
-    
-    img.src = opt.image;
-    name.textContent = opt.text;
-    display.classList.add('visible');
-  }
-
-  setConfirmed() {
-    const spinBtn = this.element.querySelector('.btn-spin');
-    spinBtn.classList.add('hidden');
-    this.element.classList.add('confirmed');
-  }
-}
-
-// ============================================
-// MYSTIC STAGE COMPONENT - Tarot Card Carousel
-// ============================================
-
-class MysticStageComponent extends StageComponent {
-  constructor(stageData, index, options = {}) {
-    super(stageData, index, options);
-    this.selectedIndex = null;
-    this.isConfirmed = false;
-    this.revealed = false;
-    this.els = {};
-  }
-
-  // A locked stage is a secret: its question, icon and emoji are NOT put into
-  // the DOM until reveal() runs on unlock. Only a lock and a teaser are shown.
-  render() {
-    const stage = document.createElement('section');
-    stage.className = 'stage-card mystic-tarot-card glass-card locked';
-    stage.dataset.index = this.index;
-    stage.id = `stage-${this.index}`;
-
-    const stageNumber = this.index + 1;
-
-    stage.innerHTML = `
-      <div class="card-glow"></div>
-
-      <div class="floating-stars-container">
-        ${this.generateStars()}
-      </div>
-
-      <header class="stage-header mystic-header">
-        <div class="stage-icon mystic-icon">
-          <i class="fas fa-lock"></i>
-        </div>
-        <h2 class="stage-title mystic-title">Етап ${stageNumber}</h2>
-      </header>
-
-      <div class="stage-content mystic-content">
-        <div class="mystic-carousel-container">
-          <div class="option-display mystic-display">
-            <div class="mystic-card-wrapper">
-              <div class="mystic-card-inner">
-                <div class="mystic-card-front">
-                  <div class="card-back-pattern">🔮</div>
-                </div>
-                <div class="mystic-card-back">
-                  <img class="option-image mystic-image" alt="">
-                  <div class="image-placeholder" aria-hidden="true"></div>
-                  <div class="image-mystic-frame"></div>
-                </div>
-              </div>
-            </div>
-            <p class="option-name mystic-name"></p>
-          </div>
-        </div>
-
-        <div class="stage-actions mystic-actions">
-          <button class="btn btn-primary btn-spin mystic-btn">
-            <div class="magic-circle"></div>
-            <i class="fas fa-hand-sparkles"></i>
-            <span>Обрати варіант</span>
-          </button>
-
-          <div class="confirm-actions">
-            <button class="btn btn-success btn-confirm">
-              <i class="fas fa-check"></i>
-              <span>Підтверджую!</span>
-            </button>
-            <button class="btn btn-outline btn-retry">
-              <i class="fas fa-redo"></i>
-              <span>Інший варіант</span>
-            </button>
-            <p class="reroll-note"></p>
-          </div>
-        </div>
-      </div>
-
-      <div class="stage-lock-overlay">
-        <i class="fas fa-lock"></i>
-        <p class="lock-title">Етап ${stageNumber}</p>
-        <p class="lock-teaser">Поки що це секрет 🤫</p>
-      </div>
-    `;
-
-    this.element = stage;
-    const q = (selector) => stage.querySelector(selector);
-    this.els = {
-      display: q('.option-display'),
-      cardWrapper: q('.mystic-card-wrapper'),
-      cardBack: q('.mystic-card-back'),
-      img: q('.option-image'),
-      placeholder: q('.image-placeholder'),
-      name: q('.option-name'),
-      title: q('.stage-title'),
-      icon: q('.stage-icon i'),
-      spinBtn: q('.btn-spin'),
-      confirmActions: q('.confirm-actions'),
-      confirmBtn: q('.btn-confirm'),
-      retryBtn: q('.btn-retry'),
-      rerollNote: q('.reroll-note')
-    };
-    this.bindEvents();
-    return stage;
-  }
-
-  generateStars() {
-    let stars = '';
-    for (let i = 0; i < 8; i++) {
-      const left = Math.random() * 100;
-      const top = Math.random() * 100;
-      const delay = Math.random() * 3;
-      stars += `<div class="floating-star" style="left: ${left}%; top: ${top}%; animation-delay: ${delay}s;">✨</div>`;
-    }
-    return stars;
-  }
-
-  bindEvents() {
-    const { img, cardBack, spinBtn, confirmBtn, retryBtn } = this.els;
-
-    // Broken/missing image -> neat placeholder with the stage emoji
-    img.addEventListener('load', () => cardBack.classList.remove('image-failed'));
-    img.addEventListener('error', () => {
-      if (img.getAttribute('src')) cardBack.classList.add('image-failed');
-    });
-
-    spinBtn.addEventListener('click', () => this.spin());
-    confirmBtn.addEventListener('click', () => this.confirm());
-    retryBtn.addEventListener('click', () => this.reroll());
-  }
-
-  getRerollsLeft() {
-    return this.options.getRerollsLeft ? this.options.getRerollsLeft(this.index) : 0;
-  }
-
-  pickIndex(excludeIndex = null) {
-    const all = this.data.options.map((_, i) => i);
-    const pool = excludeIndex !== null && all.length > 1
-      ? all.filter(i => i !== excludeIndex)
-      : all;
-    return Utils.randomItem(pool);
-  }
-
-  showOption(index) {
-    const opt = this.data.options[index];
-    const { img, cardBack, name } = this.els;
-    cardBack.classList.remove('image-failed');
-    img.alt = opt.text;
-    img.src = opt.image;
-    name.textContent = opt.text;
-  }
-
-  async spin({ excludeIndex = null, isReroll = false } = {}) {
-    if (this.isSpinning || this.isConfirmed || this.isLocked()) return;
-    this.isSpinning = true;
-
-    const { onSpin, soundManager } = this.options;
-    const { display, cardWrapper, cardBack, img, name } = this.els;
-
-    // Result is decided (and saved) up front, so a reload mid-spin
-    // cannot hand out a free extra spin.
-    const selectedIndex = this.pickIndex(excludeIndex);
-    const selected = this.data.options[selectedIndex];
-    this.selectedIndex = selectedIndex;
-    if (onSpin) onSpin(this.index, selectedIndex, isReroll);
-
-    // Start loading the picture now; the card flips only once it is ready.
-    const imageReady = Utils.loadImage(selected.image);
-
-    this.updateActions();
-
-    // Hide the previous picture while the card turns face down again
-    cardBack.classList.add('is-loading');
-    cardWrapper.classList.remove('flipped');
-    cardWrapper.style.transform = '';
-    name.textContent = '';
-
-    // Містичний ефект та звук
-    this.element.classList.add('mystic-spinning');
-    soundManager?.playMystic?.();
-
-    Utils.vibrate([50, 30, 50]);
-
-    display.classList.add('visible');
-
-    // Короткий spin ефект з обертанням
-    const cycles = 20; // Менше циклів для швидшого ефекту
-    let count = 0;
-
-    await new Promise(resolve => {
-      const interval = setInterval(() => {
-        // Обертання картки
-        cardWrapper.style.transform = `rotateY(${count * 30}deg)`;
-        soundManager?.playSpin();
-        count++;
-
-        if (count >= cycles) {
-          clearInterval(interval);
-          resolve();
-        }
-      }, 50); // Швидше обертання
-    });
-
-    // Чекаємо картинку (з обмеженням), щоб не показати її напівзавантаженою
-    await Promise.race([imageReady, Utils.wait(CONFIG.IMAGE_WAIT_MS)]);
-    this.showOption(selectedIndex);
-    if (typeof img.decode === 'function') {
-      await Promise.race([img.decode().catch(() => {}), Utils.wait(600)]);
-    }
-    cardBack.classList.remove('is-loading');
-
-    // Фінальний flip щоб показати картинку
-    cardWrapper.style.transform = '';
-    cardWrapper.classList.add('flipped');
-
-    this.element.classList.remove('mystic-spinning');
-    this.isSpinning = false;
-    this.updateActions();
-
-    soundManager?.playSuccess();
-    // Сильна вібрація при показі результату
-    Utils.vibrate([200, 100, 200]);
-  }
-
-  // "Інший варіант": limited by CONFIG.MAX_REROLLS, never returns the option
-  // that was just rejected, and spins right away.
-  reroll() {
-    if (this.isSpinning || this.isConfirmed || this.selectedIndex === null) return;
-    if (this.getRerollsLeft() <= 0) {
-      this.updateActions();
-      return;
-    }
-    this.spin({ excludeIndex: this.selectedIndex, isReroll: true });
-  }
-
-  updateActions() {
-    const { spinBtn, confirmActions, retryBtn, rerollNote } = this.els;
-
-    if (this.isConfirmed) {
-      spinBtn.classList.add('hidden');
-      confirmActions.classList.remove('visible');
-      return;
-    }
-
-    if (this.isSpinning) {
-      spinBtn.classList.add('hidden');
-      confirmActions.classList.remove('visible');
-      return;
-    }
-
-    if (this.selectedIndex === null) {
-      spinBtn.classList.remove('hidden');
-      spinBtn.disabled = false;
-      confirmActions.classList.remove('visible');
-      return;
-    }
-
-    const left = this.getRerollsLeft();
-    spinBtn.classList.add('hidden');
-    retryBtn.classList.toggle('hidden', left <= 0);
-    if (left <= 0) {
-      rerollNote.textContent = '🔮 Доля сказала своє слово!';
-    } else if (left === 1) {
-      rerollNote.textContent = 'Передумати можна лише раз 😉';
-    } else {
-      rerollNote.textContent = `Передумати можна ще ${left} ${left >= 5 ? 'разів' : 'рази'} 😉`;
-    }
-    confirmActions.classList.add('visible');
-  }
-
-  confirm() {
-    if (this.isConfirmed || this.isSpinning || this.selectedIndex === null) return;
-    const { onConfirm, soundManager } = this.options;
-
-    this.isConfirmed = true;
-    this.updateActions();
-    this.element.classList.add('confirmed');
-
-    soundManager?.playSuccess();
-    Utils.vibrate([100, 50, 100]);
-
-    // Trigger confetti
-    if (typeof confetti === 'function') {
-      confetti({
-        particleCount: 100,
-        spread: 70,
-        origin: { y: 0.6 },
-        colors: ['#9D84FF', '#FFD700', '#E0C3FC', '#ff9ff3']
-      });
-    }
-
-    if (onConfirm) {
-      onConfirm(this.index);
-    }
-  }
-
-  retry() {
-    this.reroll();
-  }
-
-  // Puts the real question/icon/emoji into the card (only on unlock).
-  reveal() {
-    if (this.revealed) return;
-    this.revealed = true;
-    this.els.icon.className = `fas ${this.data.icon}`;
-    this.els.title.textContent = this.data.question;
-    this.els.placeholder.textContent = this.data.emoji;
-  }
-
-  isLocked() {
-    return this.element?.classList.contains('locked') ?? true;
-  }
-
-  unlock({ silent = false } = {}) {
-    this.reveal();
-    if (!this.isLocked()) return;
-    this.element.classList.remove('locked');
-    this.element.classList.add('unlocked');
-    this.updateActions();
-    if (!silent) this.options.soundManager?.playUnlock();
-  }
-
-  lock() {
-    this.element.classList.add('locked');
-    this.element.classList.remove('unlocked');
-  }
-
-  // Restores a saved (possibly unconfirmed) selection after a reload.
-  setSelected(selectedIndex) {
-    if (selectedIndex === null || selectedIndex === undefined) {
-      this.updateActions();
-      return;
-    }
-
-    this.selectedIndex = selectedIndex;
-    this.showOption(selectedIndex);
-    this.els.cardBack.classList.remove('is-loading');
-    this.els.display.classList.add('visible');
-    this.els.cardWrapper.classList.add('flipped');
-    this.updateActions();
-  }
-
-  setConfirmed() {
-    this.isConfirmed = true;
-    this.element.classList.add('confirmed');
-    this.updateActions();
-  }
-}
-
-// ============================================
-// ROADMAP GENERATOR
-// ============================================
-
-class RoadmapGenerator {
-  constructor(stages, stateManager) {
-    this.stages = stages;
+class StoryImage {
+  constructor(stateManager) {
     this.stateManager = stateManager;
   }
 
-  async generate(container, date = new Date()) {
+  async ensureFonts() {
+    if (!document.fonts?.load) return;
+    try {
+      await Promise.race([
+        Promise.all([
+          document.fonts.load('700 120px "Unbounded"', 'Цього дня'),
+          document.fonts.load('700 52px "Unbounded"', 'Їжак ґанок є'),
+          document.fonts.load('500 40px "Onest"', 'Їжак ґанок є'),
+          document.fonts.load('600 40px "Onest"', 'Їжак ґанок є')
+        ]),
+        Utils.wait(3000)
+      ]);
+    } catch (e) {
+      // fall back to system fonts
+    }
+  }
+
+  loadForCanvas(src) {
+    return new Promise(resolve => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      const timer = setTimeout(() => resolve(null), 3000);
+      img.onload = () => { clearTimeout(timer); resolve(img); };
+      img.onerror = () => { clearTimeout(timer); resolve(null); };
+      img.src = src;
+    });
+  }
+
+  wrapLines(ctx, text, maxWidth, maxLines) {
+    const words = String(text).split(/\s+/);
+    const lines = [];
+    let line = '';
+    words.forEach(word => {
+      const attempt = line ? `${line} ${word}` : word;
+      if (ctx.measureText(attempt).width <= maxWidth || !line) {
+        line = attempt;
+      } else {
+        lines.push(line);
+        line = word;
+      }
+    });
+    if (line) lines.push(line);
+    if (lines.length > maxLines) {
+      const kept = lines.slice(0, maxLines);
+      kept[maxLines - 1] = `${kept[maxLines - 1]}…`;
+      return kept;
+    }
+    return lines;
+  }
+
+  fitFont(ctx, text, weight, size, family, maxWidth, minSize) {
+    let s = size;
+    ctx.font = `${weight} ${s}px ${family}`;
+    while (ctx.measureText(text).width > maxWidth && s > minSize) {
+      s -= 2;
+      ctx.font = `${weight} ${s}px ${family}`;
+    }
+    return s;
+  }
+
+  async render(date = new Date()) {
+    await this.ensureFonts();
+
+    const W = 1080;
+    const H = 1920;
+    const PAD = 96;
+    const display = '"Unbounded", "Arial Black", sans-serif';
+    const text = '"Onest", system-ui, -apple-system, "Segoe UI", sans-serif';
+    const { ink, cream, accent } = PALETTE;
+    const soft = Color.soft(cream, ink);
+
     const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
     const ctx = canvas.getContext('2d');
 
-    const confirmedStages = this.stages.filter((_, i) =>
-      this.stateManager.isStageConfirmed(i)
-    );
-
-    if (confirmedStages.length === 0) {
-      console.warn('No confirmed stages to display!');
-      return null;
-    }
-
-    // Make sure the web fonts are used on the canvas when available
-    try {
-      if (document.fonts?.ready) {
-        await Promise.race([document.fonts.ready, Utils.wait(1500)]);
-      }
-    } catch (e) {
-      // fonts are optional
-    }
-
-    const width = 500; // Зменшено з 600
-    const stageHeight = 110; // Зменшено з 140 для компактності
-    const height = confirmedStages.length * stageHeight + 100; // Менший відступ
-
-    // Draw at 2x so the saved picture stays sharp on a phone screen
-    const scale = 2;
-    canvas.width = width * scale;
-    canvas.height = height * scale;
-    ctx.scale(scale, scale);
-
-    // Background gradient
-    const gradient = ctx.createLinearGradient(0, 0, 0, height);
-    gradient.addColorStop(0, '#fce4ec');
-    gradient.addColorStop(0.5, '#f8bbd0');
-    gradient.addColorStop(1, '#f3e5f5');
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, width, height);
-
-    // Decorative pattern
-    ctx.strokeStyle = 'rgba(255, 107, 129, 0.1)';
-    ctx.lineWidth = 1;
-    for (let i = 0; i < height; i += 20) {
-      ctx.beginPath();
-      ctx.moveTo(0, i);
-      ctx.lineTo(width, i);
-      ctx.stroke();
-    }
-
-    // Title
-    ctx.font = 'bold 22px "Playfair Display", serif'; // Зменшено з 28px
-    ctx.fillStyle = '#2d1b3e';
-    ctx.textAlign = 'center';
-    ctx.fillText('✨ Цього дня ✨', width / 2, 35); // Менший відступ
+    ctx.fillStyle = ink;
+    ctx.fillRect(0, 0, W, H);
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign = 'left';
 
     // Date
-    ctx.font = '13px "Montserrat", sans-serif'; // Зменшено з 16px
-    ctx.fillStyle = '#666';
-    ctx.fillText(date.toLocaleDateString('uk-UA', {
-      weekday: 'long', 
-      year: 'numeric', 
-      month: 'long', 
-      day: 'numeric' 
-    }), width / 2, 60); // Зменшено відступ
+    ctx.fillStyle = soft;
+    ctx.font = `500 40px ${text}`;
+    const dateText = date.toLocaleDateString('uk-UA', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    ctx.fillText(dateText.charAt(0).toUpperCase() + dateText.slice(1), PAD, 210);
 
-    // Path line
-    const pathX = width / 2;
-    let currentY = 80; // Менший початковий відступ
+    // Title
+    ctx.fillStyle = cream;
+    this.fitFont(ctx, 'Цього дня', 700, 132, display, W - PAD * 2, 80);
+    ctx.fillText('Цього дня', PAD - 6, 360);
 
-    // Спочатку порахуємо скільки підтверджених стадій
-    let stageIndex = 0;
+    // Route
+    const stages = DATE_OPTIONS.stages;
+    const top = 500;
+    const bottom = H - 280;
+    const rowH = (bottom - top) / stages.length;
+    const D = 150; // thumbnail diameter
+    const cx = PAD + D / 2;
+    const textX = PAD + D + 48;
+    const textW = W - textX - PAD;
 
-    ctx.strokeStyle = '#ff6b81';
-    ctx.lineWidth = 4;
-    ctx.setLineDash([10, 5]);
+    // connecting line
+    ctx.strokeStyle = Color.rgba(cream, 0.22);
+    ctx.lineWidth = 6;
     ctx.beginPath();
-    ctx.moveTo(pathX, currentY);
-    ctx.lineTo(pathX, height - 20); // Скоректована кінцева точка
+    ctx.moveTo(cx, top + rowH / 2);
+    ctx.lineTo(cx, top + rowH * (stages.length - 0.5));
     ctx.stroke();
-    ctx.setLineDash([]);
 
-    // Load and draw stages
-    for (let i = 0; i < this.stages.length; i++) {
-      const stageState = this.stateManager.getStage(i);
-      if (!stageState.confirmed || stageState.selectedIndex === null) continue;
+    const images = await Promise.all(stages.map((stage, i) => {
+      const st = this.stateManager.getStage(i);
+      if (!st.confirmed || st.selectedIndex === null) return null;
+      return this.loadForCanvas(stage.options[st.selectedIndex].image);
+    }));
 
-      const stage = this.stages[i];
-      const option = stage.options[stageState.selectedIndex];
-      const y = currentY + (stageIndex === 0 ? 20 : 0); // Менший відступ для першого елемента
+    stages.forEach((stage, i) => {
+      const st = this.stateManager.getStage(i);
+      const cy = top + rowH * (i + 0.5);
+      const color = stageColor(i);
 
-      // Завантажити і намалювати міні-фото
-      const imgSize = 50;
-      const imgX = pathX - 100;
-      const imgY = y - imgSize / 2;
-
-      try {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-
-        let imageLoaded = false;
-
-        await new Promise((resolve) => {
-          img.onload = () => {
-            imageLoaded = true;
-            resolve();
-          };
-          img.onerror = () => {
-            console.warn('Image failed:', option.image);
-            resolve();
-          };
-          img.src = option.image;
-          setTimeout(resolve, 2000);
-        });
-
-        if (imageLoaded) {
-          ctx.save();
-          ctx.beginPath();
-          ctx.arc(imgX + imgSize / 2, imgY + imgSize / 2, imgSize / 2, 0, Math.PI * 2);
-          ctx.clip();
-          ctx.drawImage(img, imgX, imgY, imgSize, imgSize);
-          ctx.restore();
-
-          ctx.beginPath();
-          ctx.arc(imgX + imgSize / 2, imgY + imgSize / 2, imgSize / 2, 0, Math.PI * 2);
-          ctx.strokeStyle = '#ffd700';
-          ctx.lineWidth = 3;
-          ctx.stroke();
-        } else {
-          // Placeholder
-          ctx.beginPath();
-          ctx.arc(imgX + imgSize / 2, imgY + imgSize / 2, imgSize / 2, 0, Math.PI * 2);
-          ctx.fillStyle = 'rgba(181, 101, 216, 0.3)';
-          ctx.fill();
-          ctx.strokeStyle = '#ffd700';
-          ctx.lineWidth = 3;
-          ctx.stroke();
-
-          ctx.font = '24px serif';
-          ctx.fillStyle = '#fff';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(stage.emoji, imgX + imgSize / 2, imgY + imgSize / 2);
-        }
-      } catch (e) {
-        console.warn('Error:', e);
-      }
-
-      // Stage circle з емоджі
+      // ring in the stage colour
+      ctx.fillStyle = color;
       ctx.beginPath();
-      ctx.arc(pathX, y, 16, 0, Math.PI * 2); // Зменшено з 20 до 16
-      ctx.fillStyle = '#ffd700';
+      ctx.arc(cx, cy, D / 2 + 10, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = '#ff6b81';
-      ctx.lineWidth = 2; // Тонша рамка
-      ctx.stroke();
 
-      // Emoji
-      ctx.font = '16px serif'; // Зменшено з 20px
-      ctx.fillStyle = '#2d1b3e';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(stage.emoji, pathX, y + 1);
+      const img = images[i];
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, D / 2, 0, Math.PI * 2);
+      ctx.clip();
+      if (img) {
+        const scale = Math.max(D / img.naturalWidth, D / img.naturalHeight);
+        const w = img.naturalWidth * scale;
+        const h = img.naturalHeight * scale;
+        ctx.drawImage(img, cx - w / 2, cy - h / 2, w, h);
+      } else {
+        ctx.fillStyle = Color.mix(cream, color, 0.25);
+        ctx.fillRect(cx - D / 2, cy - D / 2, D, D);
+        ctx.font = `72px ${text}`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(stage.emoji, cx, cy + 4);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+      }
+      ctx.restore();
 
-      // Text box
-      const text = option.text;
-      ctx.font = 'bold 14px "Montserrat", sans-serif'; // Зменшено з 16px
-      const textWidth = ctx.measureText(text).width;
-      const boxWidth = textWidth + 30; // Менший padding
-      const boxHeight = 30; // Менша висота
-      const boxX = pathX - boxWidth / 2;
-      const boxY = y + 25; // Менший відступ
+      // label + name
+      const name = st.confirmed && st.selectedIndex !== null ? stage.options[st.selectedIndex].text : '—';
+      ctx.font = `700 52px ${display}`;
+      const lines = this.wrapLines(ctx, name, textW, 2);
+      const lineH = 62;
+      const blockH = 48 + lines.length * lineH;
+      let y = cy - blockH / 2 + 34;
 
-      // Box background з кращим контрастом
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.95)'; // Більш непрозорий фон
-      this.roundRect(ctx, boxX, boxY, boxWidth, boxHeight, 10);
-      ctx.fill();
-      ctx.strokeStyle = '#ffd700';
-      ctx.lineWidth = 3; // Товща рамка
-      ctx.stroke();
+      ctx.fillStyle = soft;
+      ctx.font = `600 34px ${text}`;
+      ctx.fillText(`${Utils.pad2(i + 1)}  ${stage.emoji}`, textX, y);
 
-      // Text з тінню для кращої читабельності
-      ctx.fillStyle = '#1a0933'; // Темніший фіолетовий
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-
-      // Додаємо тінь для чіткості
-      ctx.shadowColor = 'rgba(255, 255, 255, 0.8)';
-      ctx.shadowBlur = 2;
-      ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = 1;
-
-      ctx.fillText(text, pathX, boxY + boxHeight / 2);
-
-      // Скидаємо тінь
-      ctx.shadowColor = 'transparent';
-      ctx.shadowBlur = 0;
-
-      currentY += stageHeight;
-      stageIndex++; // Збільшуємо індекс підтверджених стадій
-    }
+      ctx.fillStyle = cream;
+      ctx.font = `700 52px ${display}`;
+      y += 20;
+      lines.forEach(line => {
+        y += lineH;
+        ctx.fillText(line, textX, y - 8);
+      });
+    });
 
     // Footer
-    ctx.font = 'italic 12px "Montserrat", sans-serif'; // Зменшено
-    ctx.fillStyle = '#888';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('🎉 Дякую за чудовий день! 🎉', width / 2, height - 15);
-
-    container.innerHTML = '';
-    canvas.style.width = `${width}px`;
-    canvas.style.maxWidth = '100%';
-    canvas.style.height = 'auto';
-    canvas.style.borderRadius = '15px';
-    canvas.setAttribute('role', 'img');
-    canvas.setAttribute('aria-label', 'Карта нашого дня');
-    container.appendChild(canvas);
+    ctx.fillStyle = accent;
+    ctx.font = `600 44px ${text}`;
+    ctx.fillText('Дякую за чудовий день! 🎉', PAD, H - 150);
 
     return canvas;
   }
-
-  // ---- Saving the picture (one implementation for the one button) ----
 
   fileName(date = new Date()) {
     return `roadmap-${Utils.localDateString(date)}.png`;
@@ -2315,7 +1225,7 @@ class RoadmapGenerator {
           }
         }, 'image/png');
       } catch (e) {
-        console.error('Could not export the roadmap:', e);
+        console.error('Could not export the picture:', e);
         resolve(null);
       }
     });
@@ -2373,103 +1283,578 @@ class RoadmapGenerator {
       Toast.show('Картинку збережено! 🎉', 'success');
       Utils.vibrate([50, 30, 50]);
     } catch (error) {
-      console.error('Error downloading roadmap:', error);
+      console.error('Error downloading the picture:', error);
       Toast.show('Не вдалося зберегти картинку 😔', 'error');
     }
-  }
-
-  roundRect(ctx, x, y, width, height, radius) {
-    ctx.beginPath();
-    ctx.moveTo(x + radius, y);
-    ctx.lineTo(x + width - radius, y);
-    ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
-    ctx.lineTo(x + width, y + height - radius);
-    ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
-    ctx.lineTo(x + radius, y + height);
-    ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
-    ctx.lineTo(x, y + radius);
-    ctx.quadraticCurveTo(x, y, x + radius, y);
-    ctx.closePath();
   }
 }
 
 // ============================================
-// MAIN APP
+// MAIN APP — one full-screen scene at a time
 // ============================================
+//
+// Scenes: intro (5 slides) → for each stage: question → draw/result → wait
+// → (tap) next stage … → final. The scene is always derived from the saved
+// state, so a reload lands exactly where Мері was.
+
+const RATING_MESSAGES = {
+  excited: 'У захваті? Оце я розумію — день вдався! 🤩',
+  laughing: 'Класно, що було так весело! 😂',
+  happy: 'Супер, радий, що тобі сподобалося! 😊',
+  neutral: 'Дякую за чесність! Наступного разу буде ще краще 🙂',
+  speechless: 'Без слів? Сподіваюся, це хороше «без слів» 😄',
+  sad: 'Ой… Вибач, якщо щось пішло не так. Я все виправлю! 🙏'
+};
+
+const RATINGS = [
+  ['excited', '🤩', 'У захваті'],
+  ['laughing', '😂', 'Дуже весело'],
+  ['happy', '😊', 'Добре'],
+  ['neutral', '😐', 'Нормально'],
+  ['speechless', '😶', 'Без слів'],
+  ['sad', '😢', 'Сумно']
+];
 
 class DateRandomizerApp {
   constructor() {
     this.stateManager = new StateManager();
     this.soundManager = new SoundManager();
-    this.themeManager = new ThemeManager();
-    this.particles = null;
-    this.progressBar = null;
-    this.timer = null;
-    this.stageComponents = [];
-    this.roadmapGenerator = null;
-    this.canvas = null;
-    this.roadmapFile = null;
-    this.conversationTopics = null;
-    this.isNavigating = false;
-    this.finalShown = false;
+    this.timer = new Timer();
+    this.conversationTopics = new ConversationTopics();
+    this.storyImage = new StoryImage(this.stateManager);
+    this.scenesEl = null;
+    this.scene = null;
+    this.deck = null;
+    this.busy = false;
+    this.introCount = 0;
     this.preloadedImages = [];
+    this.storyCanvas = null;
+    this.storyFile = null;
+    this.storyPromise = null;
+    this.celebrateFinal = false;
+    this.themeMeta = null;
+    this.topicsForStage = null;
   }
 
-  async init() {
+  init() {
     try {
-      // Initialize managers
       this.stateManager.load();
       this.soundManager.init();
-      this.themeManager.init();
 
-      // Initialize particles
-      const particlesContainer = Utils.$('#particles');
-      if (particlesContainer) {
-        this.particles = new ParticlesEffect(particlesContainer);
-        this.particles.init();
-      }
+      this.scenesEl = Utils.$('#scenes');
+      this.themeMeta = document.querySelector('meta[name="theme-color"]');
+      this.introCount = Utils.$$('template[id^="tpl-intro-"]').length;
 
-      // Initialize progress bar
-      const progressBarElement = Utils.$('#progressBar');
-      if (progressBarElement) {
-        this.progressBar = new ProgressBar(progressBarElement, DATE_OPTIONS.stages.length);
-        this.progressBar.init();
-      }
+      this.setupHeader();
+      this.setupRouteSheet();
 
-      // Initialize conversation topics first
-      const topicsContainer = Utils.$('#conversationTopicsContainer');
-      if (topicsContainer) {
-        this.conversationTopics = new ConversationTopics();
-        topicsContainer.appendChild(this.conversationTopics.render());
-      }
+      this.show(this.sceneFromState(), { animate: false });
 
-      // Initialize timer with conversation topics reference
-      const timerElement = Utils.$('#globalTimer');
-      if (timerElement) {
-        this.timer = new Timer(timerElement, this.conversationTopics);
-        this.setupOwnerSkip(timerElement);
-      }
-
-      // Initialize roadmap generator
-      this.roadmapGenerator = new RoadmapGenerator(DATE_OPTIONS.stages, this.stateManager);
-
-      // Setup UI
-      this.setupThemeToggle();
-      this.setupSoundToggle();
-      this.setupIntroNavigation();
-      this.setupStages();
-      this.setupFinalScreen();
-
-      // Restore state
-      this.restoreState();
+      // Re-fit headings once the web fonts have arrived, and on rotation
+      if (document.fonts?.ready) document.fonts.ready.then(() => this.refit());
+      let resizeTimer = null;
+      window.addEventListener('resize', () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => this.refit(), 150);
+      });
     } catch (error) {
       console.error('❌ Error during initialization:', error);
     }
   }
 
+  // ---------- state → scene ----------
+
+  sceneFromState() {
+    const s = this.stateManager.state;
+    const last = STAGE_COUNT - 1;
+
+    if (s.farewellReached) return { type: 'final' };
+    if (!s.introCompleted) {
+      return { type: 'intro', step: Math.min(s.introStep, Math.max(0, this.introCount - 1)) };
+    }
+    if (s.pendingStage !== null) {
+      return { type: 'wait', stageIndex: s.pendingStage === 'farewell' ? last : s.pendingStage - 1 };
+    }
+
+    const current = s.stages.findIndex(st => !st.confirmed);
+    if (current === -1) {
+      // everything confirmed but nothing pending: the finale is ready
+      this.stateManager.update({ pendingStage: 'farewell', pendingUnlockTime: Date.now() });
+      return { type: 'wait', stageIndex: last };
+    }
+    return s.stages[current].selectedIndex === null
+      ? { type: 'question', stageIndex: current }
+      : { type: 'draw', stageIndex: current, mode: 'restore' };
+  }
+
+  // Runs a user action once; taps during a transition/draw are ignored.
+  async guard(action) {
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      await action();
+    } catch (error) {
+      console.error('Action failed:', error);
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  async show(scene, { animate = true } = {}) {
+    this.timer.stop();
+    this.closeRoute();
+    this.scene = scene;
+    this.deck = null;
+
+    let view;
+    switch (scene.type) {
+      case 'intro': view = this.buildIntro(scene); break;
+      case 'question': view = this.buildQuestion(scene); break;
+      case 'draw': view = this.buildDraw(scene); break;
+      case 'wait': view = this.buildWait(scene); break;
+      default: view = this.buildFinal(scene);
+    }
+
+    this.applyChapter(scene);
+    this.updateHeader(scene);
+    await this.swap(view.el, animate);
+    if (view.after) await view.after();
+  }
+
+  async swap(el, animate) {
+    const old = [...this.scenesEl.querySelectorAll('.scene')];
+    this.scenesEl.appendChild(el);
+    this.refit(el);
+
+    if (!animate || !old.length || Utils.reducedMotion()) {
+      old.forEach(o => o.remove());
+      return;
+    }
+    old.forEach(o => o.classList.add('scene-out'));
+    el.classList.add('scene-in');
+    await Utils.wait(CONFIG.SCENE_MS);
+    old.forEach(o => o.remove());
+    el.classList.remove('scene-in');
+  }
+
+  makeScene(kind) {
+    const el = document.createElement('section');
+    el.className = `scene scene-${kind}`;
+    el.innerHTML = '<div class="scene-body"></div><div class="scene-actions"></div>';
+    return { el, body: el.firstElementChild, actions: el.lastElementChild };
+  }
+
+  refit(root = this.scenesEl) {
+    if (!root) return;
+    root.querySelectorAll('.fit').forEach(el => Utils.fit(el, Number(el.dataset.fitMin) || 22));
+    const bodies = root.classList?.contains('scene-body') ? [root] : root.querySelectorAll('.scene-body');
+    bodies.forEach(body => this.updateScrollHint(body));
+  }
+
+  // Fades the bottom edge while there is more content to scroll to.
+  updateScrollHint(body) {
+    if (!body.dataset.hint) {
+      body.dataset.hint = '1';
+      body.addEventListener('scroll', () => this.updateScrollHint(body), { passive: true });
+    }
+    const more = body.scrollHeight - body.clientHeight - body.scrollTop > 4;
+    body.classList.toggle('is-scrollable', more);
+  }
+
+  // ---------- look: chapter colours, header ----------
+
+  chapterFor(scene) {
+    if (scene.type === 'intro') return Color.chapter(PALETTE.cream);
+    if (scene.type === 'final') return Color.chapter(PALETTE.ink);
+    return Color.chapter(stageColor(scene.stageIndex));
+  }
+
+  applyChapter(scene) {
+    const c = this.chapterFor(scene);
+    const root = document.documentElement;
+    const vars = {
+      '--bg': c.bg,
+      '--fg': c.fg,
+      '--fg-soft': c.soft,
+      '--surface': c.surface,
+      '--surface-soft': c.surfaceSoft,
+      '--btn-bg': c.btnBg,
+      '--btn-fg': c.btnFg,
+      '--track': c.track,
+      '--line': c.line,
+      '--accent': c.accent
+    };
+    Object.entries(vars).forEach(([k, v]) => root.style.setProperty(k, v));
+    root.dataset.tone = c.dark ? 'dark' : 'light';
+    root.dataset.chapter = scene.type === 'intro' || scene.type === 'final' ? scene.type : 'stage';
+    if (this.themeMeta) this.themeMeta.setAttribute('content', c.bg);
+    this.chapter = c;
+  }
+
+  setupHeader() {
+    const sound = Utils.$('#soundToggle');
+    const syncSound = () => {
+      sound.classList.toggle('is-muted', !this.soundManager.enabled);
+      sound.setAttribute('aria-pressed', String(this.soundManager.enabled));
+      sound.setAttribute('aria-label', this.soundManager.enabled ? 'Вимкнути звук' : 'Увімкнути звук');
+    };
+    syncSound();
+    sound.addEventListener('click', () => {
+      const enabled = this.soundManager.toggle();
+      syncSound();
+      if (enabled) this.soundManager.playClick();
+    });
+
+    Utils.$('#routeBtn').addEventListener('click', () => this.openRoute());
+    Utils.$('#progress').addEventListener('click', () => {
+      if (this.routeAvailable()) this.openRoute();
+    });
+  }
+
+  routeAvailable() {
+    return Boolean(this.scene) && ['question', 'draw', 'wait'].includes(this.scene.type);
+  }
+
+  updateHeader(scene) {
+    const progress = Utils.$('#progress');
+    const kicker = Utils.$('#kicker');
+    const routeBtn = Utils.$('#routeBtn');
+    const total = scene.type === 'intro' ? this.introCount : STAGE_COUNT;
+
+    if (progress.children.length !== total) {
+      progress.innerHTML = Array.from({ length: total }, () => '<span class="seg"><i></i></span>').join('');
+    }
+
+    const states = Array.from({ length: total }, (_, i) => {
+      if (scene.type === 'intro') return i < scene.step ? 'done' : (i === scene.step ? 'current' : '');
+      if (scene.type === 'final') return 'done';
+      if (scene.type === 'wait') {
+        if (i <= scene.stageIndex) return 'done';
+        return i === scene.stageIndex + 1 ? 'next' : '';
+      }
+      return i < scene.stageIndex ? 'done' : (i === scene.stageIndex ? 'current' : '');
+    });
+    [...progress.children].forEach((seg, i) => {
+      seg.className = `seg ${states[i] ? `is-${states[i]}` : ''}`.trim();
+      seg.style.setProperty('--fill', states[i] === 'done' || states[i] === 'current' ? '1' : '0');
+    });
+
+    const interactive = this.routeAvailable();
+    progress.classList.toggle('is-interactive', interactive);
+    progress.setAttribute('aria-disabled', String(!interactive));
+    progress.tabIndex = interactive ? 0 : -1;
+    routeBtn.hidden = !interactive;
+
+    const n = `${Utils.pad2((scene.stageIndex ?? 0) + 1)} / ${Utils.pad2(STAGE_COUNT)}`;
+    // Owner safety net: the 5-second test mode is visible in the label
+    const tag = FAST_MODE ? 'тест' : 'пауза';
+    let text = '';
+    if (scene.type === 'final') text = 'Фінал';
+    else if (scene.type === 'wait') text = `Етап ${n} · ${tag}`;
+    else if (scene.type !== 'intro') text = FAST_MODE ? `Етап ${n} · тест` : `Етап ${n}`;
+    else if (FAST_MODE) text = 'Тестовий режим';
+    kicker.textContent = text;
+  }
+
+  setNextSegmentFill(fraction) {
+    const seg = Utils.$('#progress .seg.is-next');
+    if (seg) seg.style.setProperty('--fill', String(Math.max(0, Math.min(1, fraction))));
+  }
+
+  // ---------- intro ----------
+
+  buildIntro(scene) {
+    const { el, body, actions } = this.makeScene('intro');
+    const tpl = document.getElementById(`tpl-intro-${scene.step + 1}`);
+    if (tpl) body.appendChild(tpl.content.cloneNode(true));
+    const label = tpl?.dataset.button || 'Продовжити';
+    actions.innerHTML = `<button class="btn" type="button">${Utils.escapeHtml(label)}${Utils.icon('arrow')}</button>`;
+    actions.querySelector('.btn').addEventListener('click', () => this.guard(() => this.nextIntro()));
+    return { el };
+  }
+
+  async nextIntro() {
+    this.soundManager.playClick();
+    Utils.vibrate(30);
+    const step = this.scene.step;
+    if (step < this.introCount - 1) {
+      this.stateManager.update({ introStep: step + 1 });
+      await this.show({ type: 'intro', step: step + 1 });
+    } else {
+      this.stateManager.update({ introCompleted: true });
+      await this.show(this.sceneFromState());
+    }
+  }
+
+  // ---------- stage: question ----------
+
+  buildQuestion(scene) {
+    const i = scene.stageIndex;
+    const stage = DATE_OPTIONS.stages[i];
+    const { el, body, actions } = this.makeScene('question');
+    body.innerHTML = `
+      <p class="stage-number" aria-hidden="true">${Utils.pad2(i + 1)}</p>
+      <div class="question-block">
+        <h1 class="heading fit" data-fit-min="24">${Utils.escapeHtml(stage.question)}</h1>
+      </div>`;
+    actions.innerHTML = `<button class="btn" type="button">${Utils.icon('shuffle')}<span>Обрати варіант</span></button>`;
+    actions.querySelector('.btn').addEventListener('click', () => this.guard(() => this.startDraw(i)));
+    this.preloadStageImages(i);
+    return { el };
+  }
+
+  preloadStageImages(index) {
+    DATE_OPTIONS.stages[index]?.options.forEach(option => {
+      const img = new Image();
+      img.src = option.image;
+      this.preloadedImages.push(img);
+    });
+  }
+
+  pickIndex(stageIndex, excludeIndex = null) {
+    const all = DATE_OPTIONS.stages[stageIndex].options.map((_, i) => i);
+    const pool = excludeIndex !== null && all.length > 1 ? all.filter(i => i !== excludeIndex) : all;
+    return Utils.randomItem(pool);
+  }
+
+  async startDraw(i) {
+    const st = this.stateManager.getStage(i);
+    if (st.confirmed) return;
+    if (st.selectedIndex !== null) {
+      await this.show({ type: 'draw', stageIndex: i, mode: 'restore' });
+      return;
+    }
+    // The result is decided and saved BEFORE the reveal, so a reload
+    // mid-shuffle can't hand out a free extra draw.
+    const target = this.pickIndex(i);
+    this.stateManager.updateStage(i, { selectedIndex: target });
+    this.soundManager.playClick();
+    await this.show({ type: 'draw', stageIndex: i, mode: 'shuffle', target });
+  }
+
+  // ---------- stage: draw & result ----------
+
+  buildDraw(scene) {
+    const i = scene.stageIndex;
+    const stage = DATE_OPTIONS.stages[i];
+    const { el, body, actions } = this.makeScene('draw');
+    body.innerHTML = `
+      <p class="draw-question">${Utils.escapeHtml(stage.question)}</p>
+      <div class="deck-area">
+        <div class="deck" style="--r: ${stageRatio(i)}"></div>
+        <p class="option-name" aria-live="polite"></p>
+        <p class="draw-note"></p>
+      </div>`;
+    actions.innerHTML = `
+      <button class="btn" type="button" data-action="confirm">${Utils.icon('check')}<span>Підтверджую!</span></button>
+      <div class="quiet-row"></div>`;
+
+    const deck = new Deck(body.querySelector('.deck'), body.querySelector('.option-name'), stage, this.soundManager);
+    this.deck = deck;
+
+    actions.querySelector('[data-action="confirm"]').addEventListener('click', () => this.guard(() => this.confirmStage(i)));
+
+    const after = async () => {
+      if (scene.mode === 'shuffle') {
+        this.setActionsVisible(el, false);
+        await deck.shuffleTo(scene.target);
+      } else {
+        deck.showInstant(this.stateManager.getStage(i).selectedIndex);
+      }
+      this.renderRerollRow(el, i);
+      this.setActionsVisible(el, true);
+      this.refit(el);
+    };
+    return { el, after };
+  }
+
+  setActionsVisible(el, visible) {
+    el.querySelector('.scene-actions')?.classList.toggle('is-hidden', !visible);
+    el.querySelector('.draw-note')?.classList.toggle('is-hidden', !visible);
+  }
+
+  renderRerollRow(el, i) {
+    const row = el.querySelector('.quiet-row');
+    const note = el.querySelector('.draw-note');
+    const left = this.stateManager.getRerollsLeft(i);
+    if (left > 0) {
+      row.innerHTML = `<button class="btn-quiet" type="button" data-action="reroll">${Utils.icon('refresh')}<span>Інший варіант</span></button>`;
+      row.querySelector('button').addEventListener('click', () => this.guard(() => this.reroll(i)));
+      note.textContent = left === 1
+        ? 'Передумати можна лише раз 😉'
+        : `Передумати можна ще ${left} ${left >= 5 ? 'разів' : 'рази'} 😉`;
+    } else {
+      row.innerHTML = '<p class="quiet-line">🔮 Доля сказала своє слово!</p>';
+      note.textContent = '';
+    }
+  }
+
+  // "Інший варіант": limited by CONFIG.MAX_REROLLS, never returns the option
+  // that was just rejected, saved before the reveal, and shuffles right away.
+  async reroll(i) {
+    const st = this.stateManager.getStage(i);
+    if (st.confirmed || st.selectedIndex === null || !this.deck) return;
+    if (this.stateManager.getRerollsLeft(i) <= 0) return;
+
+    const target = this.pickIndex(i, st.selectedIndex);
+    this.stateManager.updateStage(i, { selectedIndex: target, rerollsUsed: (st.rerollsUsed || 0) + 1 });
+
+    const el = this.deck.el.closest('.scene');
+    this.setActionsVisible(el, false);
+    await this.deck.shuffleTo(target);
+    this.renderRerollRow(el, i);
+    this.setActionsVisible(el, true);
+  }
+
+  async confirmStage(i) {
+    const st = this.stateManager.getStage(i);
+    if (st.confirmed || st.selectedIndex === null) return;
+
+    const isLast = i === STAGE_COUNT - 1;
+    const unlockTime = Date.now() + CONFIG.DELAY_MS;
+    const stages = this.stateManager.get('stages').map((s, k) => (k === i ? { ...s, confirmed: true } : s));
+
+    // One atomic state write, so a reload can never catch a half-done update
+    this.stateManager.update({
+      stages,
+      pendingStage: isLast ? 'farewell' : i + 1,
+      pendingUnlockTime: unlockTime
+    });
+
+    this.soundManager.playSuccess();
+    Utils.vibrate([100, 50, 100]);
+    this.burst();
+    await this.show({ type: 'wait', stageIndex: i });
+  }
+
+  burst(colors) {
+    if (typeof confetti !== 'function') return;
+    const c = this.chapter || Color.chapter(PALETTE.cream);
+    try {
+      confetti({
+        particleCount: 70,
+        spread: 70,
+        startVelocity: 38,
+        ticks: 150,
+        scalar: 0.9,
+        origin: { y: 0.72 },
+        colors: colors || [c.fg, c.dark ? PALETTE.cream : PALETTE.ink, PALETTE.accent, c.surface],
+        disableForReducedMotion: true
+      });
+    } catch (e) {
+      // confetti is decoration only
+    }
+  }
+
+  // ---------- stage: wait ----------
+
+  buildWait(scene) {
+    const i = scene.stageIndex;
+    const stage = DATE_OPTIONS.stages[i];
+    const st = this.stateManager.getStage(i);
+    const option = stage.options[st.selectedIndex] || stage.options[0];
+    const isFarewell = this.stateManager.get('pendingStage') === 'farewell';
+    const { el, body, actions } = this.makeScene('wait');
+
+    body.innerHTML = `
+      <div class="chosen">
+        <div class="chosen-thumb"></div>
+        <div class="chosen-text">
+          <p class="chosen-label">Обрано ${stage.emoji}</p>
+          <p class="chosen-name">${Utils.escapeHtml(option.text)}</p>
+        </div>
+      </div>
+      <div class="countdown-block">
+        <p class="countdown-label">${isFarewell ? 'До фіналу' : 'До наступного етапу'}</p>
+        <p class="countdown" role="timer" aria-label="Зворотний відлік"></p>
+      </div>`;
+    body.querySelector('.chosen-thumb').appendChild(createPhoto(option, stage));
+    // a fresh question for every new pause; the same one after a reload/re-render
+    const freshTopic = this.topicsForStage !== i;
+    this.topicsForStage = i;
+    body.appendChild(this.conversationTopics.render({ fresh: freshTopic }));
+
+    actions.innerHTML = `
+      <div class="teaser">${Utils.icon('lock')}<span>${isFarewell ? 'Далі — фінал' : 'Далі — секрет 🤫'}</span></div>`;
+
+    const countdown = body.querySelector('.countdown');
+    this.setupOwnerSkip(countdown);
+
+    const after = async () => {
+      const unlockTime = this.stateManager.get('pendingUnlockTime');
+      if (Date.now() >= unlockTime) {
+        this.setWaitDone(el, { silent: true });
+        return;
+      }
+      this.timer.start(unlockTime, {
+        onTick: (remaining) => {
+          this.renderCountdown(countdown, remaining);
+          this.setNextSegmentFill(1 - remaining / CONFIG.DELAY_MS);
+        },
+        onComplete: () => this.onWaitComplete(el)
+      });
+    };
+    this.renderCountdown(countdown, Math.max(0, this.stateManager.get('pendingUnlockTime') - Date.now()));
+    return { el, after };
+  }
+
+  renderCountdown(el, ms) {
+    const text = Utils.formatTime(ms);
+    if (el.textContent !== text) el.textContent = text;
+  }
+
+  // Natural expiry and the owner's long-press both end up here.
+  onWaitComplete(el) {
+    const unlockTime = this.stateManager.get('pendingUnlockTime');
+    if (unlockTime !== null && unlockTime > Date.now()) {
+      this.stateManager.update({ pendingUnlockTime: Date.now() });
+    }
+    this.setWaitDone(el, { silent: false });
+  }
+
+  setWaitDone(el, { silent }) {
+    if (!el.isConnected || el.classList.contains('is-done')) return;
+    const isFarewell = this.stateManager.get('pendingStage') === 'farewell';
+    el.classList.add('is-done');
+    el.querySelector('.countdown-label').textContent = isFarewell ? 'Фінал уже чекає!' : 'Час вийшов — можна далі!';
+    this.renderCountdown(el.querySelector('.countdown'), 0);
+    this.setNextSegmentFill(1);
+
+    const actions = el.querySelector('.scene-actions');
+    actions.innerHTML = `<button class="btn btn-pop" type="button">${isFarewell ? 'До фіналу' : 'Відкрити наступний етап'}${Utils.icon('arrow')}</button>`;
+    actions.querySelector('.btn').addEventListener('click', () => this.guard(() => this.openNext()));
+
+    if (!silent) {
+      Toast.show(isFarewell ? 'Фінал готовий! 🎉' : 'Наступний етап готовий! 🎉', 'success');
+      this.soundManager.playUnlock();
+      Utils.vibrate([80, 60, 80]);
+    }
+  }
+
+  async openNext() {
+    const pending = this.stateManager.get('pendingStage');
+    const unlockTime = this.stateManager.get('pendingUnlockTime');
+    if (pending === null || unlockTime === null || Date.now() < unlockTime) return;
+
+    this.soundManager.playClick();
+    if (pending === 'farewell') {
+      this.stateManager.update({
+        farewellReached: true,
+        finishedAt: this.stateManager.get('finishedAt') || Date.now(),
+        pendingStage: null,
+        pendingUnlockTime: null
+      });
+      this.celebrateFinal = true;
+      await this.show({ type: 'final' });
+    } else {
+      this.stateManager.update({ pendingStage: null, pendingUnlockTime: null });
+      await this.show({ type: 'question', stageIndex: pending });
+    }
+  }
+
   // Hidden owner shortcut: hold the countdown for ~1.5 s to end the wait now.
   // Deliberately no visual hint.
-  setupOwnerSkip(timerElement) {
+  setupOwnerSkip(target) {
     let holdTimer = null;
 
     const cancel = () => {
@@ -2479,8 +1864,8 @@ class DateRandomizerApp {
       }
     };
 
-    timerElement.addEventListener('pointerdown', (e) => {
-      if (!this.timer?.isRunning()) return;
+    target.addEventListener('pointerdown', (e) => {
+      if (!this.timer.isRunning()) return;
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       cancel();
       holdTimer = setTimeout(() => {
@@ -2491,579 +1876,161 @@ class DateRandomizerApp {
     });
 
     ['pointerup', 'pointercancel', 'pointerleave'].forEach(type => {
-      timerElement.addEventListener(type, cancel);
+      target.addEventListener(type, cancel);
     });
 
     // No text selection, magnifier or callout menu on long press (iOS/Android)
-    timerElement.addEventListener('touchstart', (e) => {
+    target.addEventListener('touchstart', (e) => {
       if (e.cancelable) e.preventDefault();
     }, { passive: false });
-    timerElement.addEventListener('contextmenu', (e) => e.preventDefault());
-    timerElement.addEventListener('selectstart', (e) => e.preventDefault());
+    target.addEventListener('contextmenu', (e) => e.preventDefault());
+    target.addEventListener('selectstart', (e) => e.preventDefault());
   }
 
-  setupThemeToggle() {
-    const toggle = Utils.$('#themeToggle');
-    if (!toggle) return;
+  // ---------- route (bottom sheet + final screen) ----------
 
-    toggle.classList.toggle('dark', this.themeManager.isDark);
-
-    let longPressTimer = null;
-    let isLongPress = false;
-
-    const handlePress = (e) => {
-      isLongPress = false;
-      longPressTimer = setTimeout(() => {
-        isLongPress = true;
-        Utils.vibrate([50, 30, 50]);
-        this.showThemePicker();
-      }, 500); // 500ms for long press
-    };
-
-    const handleRelease = () => {
-      if (longPressTimer) {
-        clearTimeout(longPressTimer);
-        longPressTimer = null;
+  routeItems() {
+    const s = this.stateManager.state;
+    const openIndex = this.scene && ['question', 'draw'].includes(this.scene.type) ? this.scene.stageIndex : -1;
+    return DATE_OPTIONS.stages.map((stage, i) => {
+      const st = s.stages[i];
+      if (st.confirmed && st.selectedIndex !== null) {
+        return { state: 'done', stage, i, option: stage.options[st.selectedIndex] };
       }
+      if (i === openIndex) return { state: 'current', stage, i };
+      return { state: 'locked', i };
+    });
+  }
 
-      if (!isLongPress) {
-        // Normal click - toggle light/dark
-        const isDark = this.themeManager.toggle();
-        toggle.classList.toggle('dark', isDark);
-        this.soundManager.playClick();
+  buildRouteList(list, items) {
+    list.innerHTML = '';
+    items.forEach(item => {
+      const li = document.createElement('li');
+      li.className = `route-item is-${item.state}`;
+      const thumb = document.createElement('div');
+      thumb.className = 'route-thumb';
+      const text = document.createElement('div');
+      text.className = 'route-text';
+
+      if (item.state === 'done') {
+        thumb.appendChild(createPhoto(item.option, item.stage));
+        text.innerHTML = `<p class="route-meta">${Utils.pad2(item.i + 1)} · ${item.stage.emoji}</p>
+          <p class="route-name">${Utils.escapeHtml(item.option.text)}</p>`;
+      } else if (item.state === 'current') {
+        thumb.innerHTML = `<span class="route-emoji" aria-hidden="true">${item.stage.emoji}</span>`;
+        text.innerHTML = `<p class="route-meta">${Utils.pad2(item.i + 1)} · ${item.stage.emoji}</p>
+          <p class="route-name">Обираємо зараз</p>`;
+      } else {
+        thumb.innerHTML = Utils.icon('lock');
+        text.innerHTML = `<p class="route-meta">${Utils.pad2(item.i + 1)}</p>
+          <p class="route-name">Поки що секрет 🤫</p>`;
       }
-    };
-
-    // Mouse events
-    toggle.addEventListener('mousedown', handlePress);
-    toggle.addEventListener('mouseup', handleRelease);
-    toggle.addEventListener('mouseleave', () => {
-      if (longPressTimer) {
-        clearTimeout(longPressTimer);
-        longPressTimer = null;
-      }
-    });
-
-    // Touch events
-    toggle.addEventListener('touchstart', (e) => {
-      e.preventDefault();
-      handlePress();
-    });
-    toggle.addEventListener('touchend', (e) => {
-      e.preventDefault();
-      handleRelease();
+      li.append(thumb, text);
+      list.appendChild(li);
     });
   }
 
-  showThemePicker() {
-    // Check if theme picker already exists
-    let picker = Utils.$('#themePicker');
-
-    if (picker) {
-      // If it exists, just show it
-      picker.classList.add('visible');
-      return;
-    }
-
-    // Create theme picker modal
-    picker = document.createElement('div');
-    picker.id = 'themePicker';
-    picker.className = 'theme-picker';
-    picker.innerHTML = `
-      <div class="theme-picker-overlay"></div>
-      <div class="theme-picker-content glass-card">
-        <div class="card-glow"></div>
-        <button class="theme-picker-close" aria-label="Закрити">
-          <i class="fas fa-times"></i>
-        </button>
-        <h3 class="theme-picker-title">Обери тему</h3>
-        <div class="theme-grid"></div>
-      </div>
-    `;
-
-    document.body.appendChild(picker);
-
-    const grid = picker.querySelector('.theme-grid');
-    const themes = this.themeManager.getThemeList();
-    const currentTheme = this.themeManager.getCurrentTheme();
-
-    themes.forEach(({ key, name, icon }) => {
-      const card = document.createElement('button');
-      card.className = 'theme-card';
-      card.dataset.theme = key;
-      if (key === currentTheme) {
-        card.classList.add('active');
-      }
-
-      card.innerHTML = `
-        <span class="theme-icon">${icon}</span>
-        <span class="theme-name">${name}</span>
-        <div class="theme-preview" style="background: linear-gradient(135deg,
-          ${THEMES[key].bgGradientStart},
-          ${THEMES[key].bgGradientMiddle},
-          ${THEMES[key].bgGradientEnd})">
-        </div>
-      `;
-
-      card.addEventListener('click', () => {
-        this.themeManager.setTheme(key);
-
-        // Update UI
-        const toggle = Utils.$('#themeToggle');
-        if (toggle) {
-          toggle.classList.toggle('dark', this.themeManager.isDark);
-        }
-
-        // Update active state
-        picker.querySelectorAll('.theme-card').forEach(c => c.classList.remove('active'));
-        card.classList.add('active');
-
-        this.soundManager.playSuccess();
-        Utils.vibrate(100);
-
-        // Close picker after a short delay
-        setTimeout(() => {
-          this.hideThemePicker();
-        }, 300);
-      });
-
-      grid.appendChild(card);
-    });
-
-    // Setup close handlers
-    const closeBtn = picker.querySelector('.theme-picker-close');
-    const overlay = picker.querySelector('.theme-picker-overlay');
-
-    closeBtn.addEventListener('click', () => this.hideThemePicker());
-    overlay.addEventListener('click', () => this.hideThemePicker());
-
-    // Show picker with animation
-    requestAnimationFrame(() => {
-      picker.classList.add('visible');
-    });
-
-    this.soundManager.playClick();
-  }
-
-  hideThemePicker() {
-    const picker = Utils.$('#themePicker');
-    if (!picker) return;
-
-    picker.classList.remove('visible');
-    setTimeout(() => {
-      picker.remove();
-    }, 300);
-  }
-
-  setupSoundToggle() {
-    const toggle = Utils.$('#soundToggle');
-    if (!toggle) return;
-
-    toggle.classList.toggle('muted', !this.soundManager.enabled);
-
-    toggle.addEventListener('click', () => {
-      const enabled = this.soundManager.toggle();
-      toggle.classList.toggle('muted', !enabled);
-      if (enabled) this.soundManager.playClick();
+  setupRouteSheet() {
+    const sheet = Utils.$('#routeSheet');
+    sheet.querySelectorAll('[data-close]').forEach(el => el.addEventListener('click', () => this.closeRoute()));
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') this.closeRoute();
     });
   }
 
-  setupIntroNavigation() {
-    const buttons = Utils.$$('[data-next]');
-
-    buttons.forEach(btn => {
-      const nextStep = btn.dataset.next;
-
-      btn.addEventListener('click', async (e) => {
-        e.preventDefault();
-
-        // Ignore taps while a screen transition is still running
-        if (this.isNavigating) return;
-        this.isNavigating = true;
-
-        // Add ripple effect
-        this.createRipple(e, btn);
-
-        this.soundManager.playClick();
-        Utils.vibrate(50);
-
-        try {
-          if (nextStep === 'stages') {
-            await this.startStages();
-          } else {
-            await this.navigateToScreen(nextStep);
-          }
-        } catch (error) {
-          console.error('Navigation failed:', error);
-        } finally {
-          this.isNavigating = false;
-        }
-      });
-    });
+  openRoute() {
+    const sheet = Utils.$('#routeSheet');
+    this.buildRouteList(Utils.$('#routeSheetList'), this.routeItems());
+    sheet.hidden = false;
+    Utils.vibrate(15);
+    sheet.querySelector('.sheet-head .icon-btn')?.focus({ preventScroll: true });
   }
 
-  createRipple(event, button) {
-    const ripple = document.createElement('span');
-    ripple.className = 'ripple';
-
-    const rect = button.getBoundingClientRect();
-    const size = Math.max(rect.width, rect.height);
-    const x = event.clientX - rect.left - size / 2;
-    const y = event.clientY - rect.top - size / 2;
-
-    ripple.style.width = ripple.style.height = `${size}px`;
-    ripple.style.left = `${x}px`;
-    ripple.style.top = `${y}px`;
-
-    button.appendChild(ripple);
-
-    setTimeout(() => ripple.remove(), 600);
+  closeRoute() {
+    const sheet = Utils.$('#routeSheet');
+    if (sheet && !sheet.hidden) sheet.hidden = true;
   }
 
-  async navigateToScreen(screenId) {
-    const currentScreen = Utils.$('.screen.active');
-    const nextScreen = Utils.$(`#${screenId}`);
+  // ---------- final ----------
 
-    if (!nextScreen) {
-      console.error('Screen not found:', screenId);
-      return;
-    }
+  buildFinal() {
+    const { el, body, actions } = this.makeScene('final');
+    body.innerHTML = `
+      <h1 class="display fit" data-fit-min="30">Дякую, <span class="accent">Мері!</span></h1>
+      <p class="lead final-lead">Дуже радий, що ми провели цей день разом!</p>
+      <p class="section-label">Маршрут дня</p>
+      <ol class="route final-route"></ol>
+      <p class="section-label">Оціни цей день:</p>
+      <div class="rating" role="group" aria-label="Оцінка дня">
+        ${RATINGS.map(([id, emoji, label]) =>
+          `<button class="rate-btn" type="button" data-rating="${id}" aria-label="${label}" aria-pressed="false">${emoji}</button>`).join('')}
+      </div>`;
+    actions.innerHTML = `<button class="btn" type="button" id="downloadRoadmap">${Utils.icon('download')}<span>Зберегти як картинку</span></button>`;
 
-    if (currentScreen && currentScreen !== nextScreen) {
-      // Use different transition types for variety
-      const transitionType = TransitionManager.getRandomTransition();
-      await TransitionManager.transition(currentScreen, nextScreen, transitionType);
-    } else {
-      nextScreen.classList.add('active');
-    }
+    this.buildRouteList(body.querySelector('.final-route'), this.routeItems());
 
-    this.stateManager.update({ currentStep: screenId });
-  }
-
-  setupStages() {
-    const container = Utils.$('#stagesContainer');
-    if (!container) return;
-
-    DATE_OPTIONS.stages.forEach((stageData, index) => {
-      const component = new MysticStageComponent(stageData, index, {
-        soundManager: this.soundManager,
-        onSpin: (idx, selectedIndex, isReroll) => {
-          const stage = this.stateManager.getStage(idx);
-          this.stateManager.updateStage(idx, {
-            selectedIndex,
-            rerollsUsed: (stage.rerollsUsed || 0) + (isReroll ? 1 : 0)
-          });
-        },
-        getRerollsLeft: (idx) => this.stateManager.getRerollsLeft(idx),
-        onConfirm: (idx) => this.handleStageConfirm(idx)
-      });
-
-      container.appendChild(component.render());
-      this.stageComponents.push(component);
-    });
-  }
-
-  handleStageConfirm(index) {
-    const isLast = index === DATE_OPTIONS.stages.length - 1;
-    const unlockTime = Date.now() + CONFIG.DELAY_MS;
-
-    // One atomic state write, so a reload can never catch a half-done update
-    const stages = this.stateManager.get('stages').map((stage, i) => {
-      if (i === index) return { ...stage, confirmed: true };
-      if (!isLast && i === index + 1) return { ...stage, unlockTime };
-      return stage;
-    });
-
-    this.stateManager.update(isLast
-      ? { stages, pendingStage: 'farewell', pendingUnlockTime: unlockTime }
-      : { stages, pendingStage: index + 1, pendingUnlockTime: unlockTime, lastActiveStage: index + 1 });
-
-    this.progressBar.updateStep(index, true);
-    this.startWait(unlockTime);
-  }
-
-  // Countdown for whatever is pending (next stage or the final screen).
-  startWait(unlockTime) {
-    const pending = this.stateManager.get('pendingStage');
-    const label = pending === 'farewell' ? 'До фіналу' : 'До наступного етапу';
-    this.timer.start(unlockTime, () => this.completeWait(), label);
-  }
-
-  // Single completion path for a wait: natural expiry, the owner's long-press
-  // skip, and "time already passed" on reload all end up here.
-  completeWait({ silent = false } = {}) {
-    const pending = this.stateManager.get('pendingStage');
-
-    if (pending === 'farewell') {
-      this.showFinalScreen();
-      return;
-    }
-    if (!Number.isInteger(pending)) return;
-
-    const now = Date.now();
-    const stage = this.stateManager.getStage(pending);
-    const stages = this.stateManager.get('stages').map((s, i) =>
-      i === pending && (s.unlockTime === null || s.unlockTime > now) ? { ...s, unlockTime: now } : s
-    );
-    this.stateManager.update({ stages, pendingStage: null, pendingUnlockTime: null });
-
-    this.unlockStage(pending, { scroll: !silent, silent });
-    if (!silent && stage) {
-      Toast.show('Новий етап розблоковано! 🎉', 'success');
-    }
-  }
-
-  unlockStage(index, { scroll = false, silent = false } = {}) {
-    const component = this.stageComponents[index];
-    if (!component) return;
-
-    this.preloadStageImages(index);
-    this.progressBar?.revealStep(index);
-    component.unlock({ silent });
-
-    if (scroll) {
-      this.scrollToStage(index, true);
-    }
-  }
-
-  preloadStageImages(index) {
-    const stage = DATE_OPTIONS.stages[index];
-    if (!stage) return;
-    stage.options.forEach(option => {
-      const img = new Image();
-      img.src = option.image;
-      this.preloadedImages.push(img);
-    });
-  }
-
-  scrollToStage(index, smooth = true) {
-    const element = this.stageComponents[index]?.element;
-    if (!element) return;
-    // Wait a frame so the unlocked card has its final layout
-    requestAnimationFrame(() => {
-      try {
-        element.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' });
-      } catch (e) {
-        element.scrollIntoView(true);
-      }
-    });
-  }
-
-  async startStages() {
-    const currentScreen = Utils.$('.intro-screen.active');
-    const stagesContainer = Utils.$('#stagesContainer');
-
-    this.stateManager.update({
-      introCompleted: true,
-      currentStep: 'stages'
-    });
-
-    if (currentScreen && stagesContainer) {
-      await TransitionManager.transition(currentScreen, stagesContainer, 'fade');
-    } else if (stagesContainer) {
-      stagesContainer.classList.add('active');
-    }
-
-    // Make sure no intro screen stays active underneath
-    Utils.$$('.intro-screen').forEach(screen => {
-      screen.classList.remove('active');
-    });
-
-    this.progressBar.show();
-
-    // Small pause so the unlock animation is visible
-    await Utils.wait(250);
-    this.unlockStage(0);
-  }
-
-  // Idempotent: safe to call again (reload, timer, restore) without replaying
-  // the celebration or duplicating anything.
-  showFinalScreen() {
-    if (this.finalShown) return;
-    this.finalShown = true;
-
-    const stagesContainer = Utils.$('#stagesContainer');
-    const finalScreen = Utils.$('#final');
-
-    Utils.$$('.intro-screen').forEach(screen => screen.classList.remove('active'));
-    if (stagesContainer) stagesContainer.classList.remove('active');
-    if (finalScreen) finalScreen.classList.add('active');
-
-    this.progressBar.hide();
-    this.timer.stop();
-
-    const firstArrival = !this.stateManager.get('farewellReached');
-    const finishedAt = this.stateManager.get('finishedAt') || Date.now();
-
-    this.stateManager.update({
-      farewellReached: true,
-      finishedAt,
-      pendingStage: null,
-      pendingUnlockTime: null
-    });
-
-    this.applyRatingSelection(this.stateManager.get('rating'));
-
-    // Generate roadmap (and prepare the PNG for the save button)
-    const roadmapContainer = Utils.$('#roadmapContainer');
-    if (roadmapContainer) {
-      const date = new Date(finishedAt);
-      this.roadmapGenerator.generate(roadmapContainer, date)
-        .then(async canvas => {
-          if (!canvas) return;
-          this.canvas = canvas;
-          this.roadmapFile = await this.roadmapGenerator.toFile(canvas, date);
-        })
-        .catch(error => console.error('Roadmap generation failed:', error));
-    }
-
-    // Celebration confetti — only the first time, not on every reload
-    if (firstArrival && typeof confetti === 'function') {
-      const duration = 3000;
-      const end = Date.now() + duration;
-
-      const frame = () => {
-        confetti({
-          particleCount: 3,
-          angle: 60,
-          spread: 55,
-          origin: { x: 0 },
-          colors: ['#ff6b81', '#ffd700', '#9c27b0']
-        });
-        confetti({
-          particleCount: 3,
-          angle: 120,
-          spread: 55,
-          origin: { x: 1 },
-          colors: ['#ff6b81', '#ffd700', '#9c27b0']
-        });
-
-        if (Date.now() < end) {
-          requestAnimationFrame(frame);
-        }
-      };
-      frame();
-    }
-  }
-
-  // Bound once at start-up (never from showFinalScreen).
-  setupFinalScreen() {
-    const saveBtn = Utils.$('#downloadRoadmap');
-    if (saveBtn) {
-      saveBtn.addEventListener('click', () => this.saveRoadmap());
-    }
-    this.setupEmojiRating();
-  }
-
-  saveRoadmap() {
-    if (!this.canvas) {
-      Toast.show('Картинка ще малюється, спробуй за мить 🙂', 'info');
-      return;
-    }
-    const finishedAt = this.stateManager.get('finishedAt');
-    const date = finishedAt ? new Date(finishedAt) : new Date();
-    this.roadmapGenerator.save(this.canvas, this.roadmapFile, date);
-  }
-
-  setupEmojiRating() {
-    const buttons = Utils.$$('.emoji-btn');
-
-    const messages = {
-      excited: 'У захваті? Оце я розумію — день вдався! 🤩',
-      laughing: 'Класно, що було так весело! 😂',
-      happy: 'Супер, радий, що тобі сподобалося! 😊',
-      neutral: 'Дякую за чесність! Наступного разу буде ще краще 🙂',
-      speechless: 'Без слів? Сподіваюся, це хороше «без слів» 😄',
-      sad: 'Ой… Вибач, якщо щось пішло не так. Я все виправлю! 🙏'
-    };
-
-    buttons.forEach(btn => {
+    body.querySelectorAll('.rate-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const rating = btn.dataset.rating;
-        const message = messages[rating] || 'Дякую за оцінку!';
-
         this.stateManager.update({ rating });
-        this.applyRatingSelection(rating);
-
-        Toast.show(message, 'success', 4000);
+        this.applyRatingSelection(el, rating);
+        Toast.show(RATING_MESSAGES[rating] || 'Дякую за оцінку!', 'success', 3600);
         this.soundManager.playSuccess();
-        Utils.vibrate([100, 50, 100, 50, 100]);
+        Utils.vibrate([60, 40, 60]);
       });
     });
+    this.applyRatingSelection(el, this.stateManager.get('rating'));
+
+    actions.querySelector('#downloadRoadmap').addEventListener('click', () => this.saveStory());
+
+    const after = async () => {
+      if (this.celebrateFinal) {
+        this.celebrateFinal = false;
+        this.burst([PALETTE.accent, PALETTE.cream, ...PALETTE.stageFallback]);
+        setTimeout(() => this.burst([PALETTE.accent, PALETTE.cream, ...PALETTE.stageFallback]), 450);
+      }
+      this.prepareStory();
+    };
+    return { el, after };
   }
 
-  applyRatingSelection(rating) {
-    Utils.$$('.emoji-btn').forEach(btn => {
+  applyRatingSelection(root, rating) {
+    root.querySelectorAll('.rate-btn').forEach(btn => {
       const selected = rating !== null && btn.dataset.rating === rating;
-      btn.classList.toggle('selected', selected);
       btn.setAttribute('aria-pressed', String(selected));
     });
   }
 
-  restoreState() {
-    const state = this.stateManager.state;
+  storyDate() {
+    const finishedAt = this.stateManager.get('finishedAt');
+    return finishedAt ? new Date(finishedAt) : new Date();
+  }
 
-    // If farewell reached, show final screen
-    if (state.farewellReached && this.stateManager.areAllStagesConfirmed()) {
-      this.showFinalScreen();
+  // Draws the story picture in the background so the save tap can share at once.
+  prepareStory() {
+    if (this.storyPromise) return this.storyPromise;
+    const date = this.storyDate();
+    this.storyPromise = this.storyImage.render(date)
+      .then(async canvas => {
+        this.storyCanvas = canvas;
+        this.storyFile = await this.storyImage.toFile(canvas, date);
+        return canvas;
+      })
+      .catch(error => {
+        console.error('Story picture failed:', error);
+        this.storyPromise = null;
+        return null;
+      });
+    return this.storyPromise;
+  }
+
+  saveStory() {
+    if (!this.storyCanvas) {
+      Toast.show('Картинка ще готується, спробуй за мить 🙂');
+      this.prepareStory();
       return;
     }
-
-    // If intro completed, show stages
-    if (state.introCompleted) {
-      Utils.$$('.intro-screen').forEach(screen => {
-        screen.classList.remove('active');
-      });
-
-      const stagesContainer = Utils.$('#stagesContainer');
-      if (stagesContainer) stagesContainer.classList.add('active');
-
-      this.progressBar.show();
-
-      // Restore stage states
-      this.stageComponents.forEach((component, index) => {
-        const stageState = state.stages[index];
-
-        if (stageState.confirmed) {
-          this.progressBar.updateStep(index, true);
-          this.progressBar.revealStep(index);
-          component.unlock({ silent: true });
-          component.setSelected(stageState.selectedIndex);
-          component.setConfirmed();
-        } else if (state.pendingStage !== index && this.stateManager.isStageUnlocked(index)) {
-          this.unlockStage(index, { silent: true });
-          component.setSelected(stageState.selectedIndex);
-        }
-      });
-
-      // Resume pending countdown
-      if (state.pendingStage !== null && state.pendingUnlockTime) {
-        if (state.pendingUnlockTime - Date.now() > 0) {
-          this.startWait(state.pendingUnlockTime);
-        } else {
-          // Time already passed while the page was closed
-          this.completeWait({ silent: true });
-          if (this.finalShown) return;
-        }
-      }
-
-      // Bring the current step into view: the stage to play now, or the
-      // last confirmed one while waiting.
-      const stages = this.stateManager.get('stages');
-      const pending = this.stateManager.get('pendingStage');
-      let current = stages.findIndex(s => !s.confirmed);
-      if (pending === 'farewell') current = stages.length - 1;
-      else if (Number.isInteger(pending)) current = pending - 1;
-      if (current > 0) this.scrollToStage(current, false);
-
-      return;
-    }
-
-    // First time - just show intro-1 (it's already active in HTML)
-    const intro1 = Utils.$('#intro-1');
-    if (intro1 && !intro1.classList.contains('active')) {
-      intro1.classList.add('active');
-    }
+    this.storyImage.save(this.storyCanvas, this.storyFile, this.storyDate());
   }
 }
 
@@ -3082,7 +2049,7 @@ function handleResetParam() {
     CONFIG.USER_ID_KEY,
     CONFIG.FAVORITES_KEY,
     CONFIG.SOUNDS_ENABLED_KEY,
-    CONFIG.THEME_KEY
+    CONFIG.LEGACY_THEME_KEY
   ];
   keys.forEach(key => {
     try {
