@@ -27,7 +27,8 @@ const CONFIG = {
   MAX_REROLLS: 1, // скільки разів на етапі можна натиснути «Інший варіант»
   OWNER_SKIP_HOLD_MS: 1500, // утримання таймера, щоб одразу завершити очікування
   IMAGE_WAIT_MS: 4000, // скільки максимум чекати картинку перед показом результату
-  SHUFFLE_MS: 2200, // тривалість «тасування» фото
+  ROLL_MS: 2100, // «рулетка»: скільки бігає підсвітка до майже-зупинки
+  NEAR_MISS_MS: 820, // пауза на сусідньому варіанті перед останнім кроком
   SCENE_MS: 300, // тривалість переходу між екранами
   STORAGE_KEY: 'dateRandomizerState_v4',
   LEGACY_STORAGE_KEYS: ['dateRandomizerState_v3', 'dateRandomizerState_v2', 'dateRandomizerState'],
@@ -198,23 +199,28 @@ class Utils {
     return array[Math.floor(Math.random() * array.length)];
   }
 
-  static shuffled(array) {
-    const a = [...array];
-    for (let i = a.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [a[i], a[j]] = [a[j], a[i]];
-    }
-    return a;
-  }
-
   static pad2(n) {
     return String(n).padStart(2, '0');
+  }
+
+  // Ukrainian plural: 1 варіант, 2–4 варіанти, 5+ варіантів
+  static plural(n, one, few, many) {
+    const m10 = n % 10;
+    const m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return one;
+    if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+    return many;
   }
 
   static escapeHtml(value) {
     return String(value).replace(/[&<>"']/g, c => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
     }[c]));
+  }
+
+  // Escaped text for big headings: a dash never starts a line (Ukrainian typography).
+  static headingHtml(value) {
+    return Utils.escapeHtml(value).replace(/ — /g, '&nbsp;— ');
   }
 
   static reducedMotion() {
@@ -659,12 +665,11 @@ class ConversationTopics {
   toggleFavorite() {
     if (!this.key) return;
     const index = this.favorites.indexOf(this.key);
+    // feedback = the filled star + the "★ Улюблені · N" chip (no toast over the content)
     if (index > -1) {
       this.favorites.splice(index, 1);
-      Toast.show('Прибрано з улюблених');
     } else {
       this.favorites.push(this.key);
-      Toast.show('Додано до улюблених ★');
       Utils.vibrate([40, 30, 40]);
     }
     try {
@@ -908,112 +913,103 @@ class Timer {
 }
 
 // ============================================
-// DECK — the visible "draw" of a random option
+// ROULETTE — the visible draw over the pool of options
 // ============================================
+//
+// All options of the current stage are shown as tiles. A spotlight runs
+// round them clockwise, fast at first, slows down, "almost stops" on the
+// neighbour of the winner, then creeps one more step onto it. The winner is
+// decided (and saved) BEFORE the spin; the path is built backwards from it,
+// so it always lands exactly there.
 
-const REST_ANGLES = [-6, 5, -3, 7, -5, 4];
-
-class Deck {
-  constructor(deckEl, nameEl, stage, sound) {
-    this.el = deckEl;
-    this.nameEl = nameEl;
-    this.stage = stage;
+class Roulette {
+  constructor(poolEl, sound) {
+    this.el = poolEl;
     this.sound = sound;
-    this.top = null;
-    this.z = 1;
-    this.cards = stage.options.map((option, index) => {
-      const card = createPhoto(option, stage, 'deck-card');
-      card.style.setProperty('--rot', `${REST_ANGLES[index % REST_ANGLES.length]}deg`);
-      card.style.zIndex = String(index + 1);
-      this.el.appendChild(card);
-      return card;
-    });
+    this.tiles = [...poolEl.querySelectorAll('.tile')];
+    this.cols = Number(poolEl.dataset.cols) || 2;
+    this.lit = null;
   }
 
-  bringToTop(index, dealMs = 0) {
-    const card = this.cards[index];
-    if (!card) return;
-    if (this.top !== null && this.top !== index) this.cards[this.top].classList.remove('is-top');
-    this.z += 1;
-    card.style.zIndex = String(this.z);
-    card.classList.add('is-top');
-    card.classList.remove('settle');
-    if (dealMs > 0) {
-      card.style.setProperty('--deal-ms', `${Math.round(dealMs)}ms`);
-      Utils.restartAnimation(card, 'deal');
+  // Clockwise loop through the grid, limited to the tiles still in play.
+  ringOrder(inPlay) {
+    const n = this.tiles.length;
+    const cols = this.cols;
+    const rows = Math.ceil(n / cols);
+    let ring;
+    if (cols === 2) {
+      // down the right column, back up the left one
+      const right = [];
+      const left = [];
+      for (let i = 0; i < n; i++) (i % 2 ? right : left).push(i);
+      ring = [left[0], ...right, ...left.slice(1).reverse()];
+    } else {
+      ring = [];
+      for (let r = 0; r < rows; r++) {
+        const row = [];
+        for (let c = 0; c < cols && r * cols + c < n; c++) row.push(r * cols + c);
+        ring.push(...(r % 2 ? row.reverse() : row));
+      }
     }
-    this.top = index;
+    return ring.filter(i => inPlay.includes(i));
   }
 
-  setName(index, animate = false) {
-    this.nameEl.textContent = this.stage.options[index].text;
-    Utils.fit(this.nameEl, 18);
-    if (animate) Utils.restartAnimation(this.nameEl, 'tick');
-  }
-
-  showInstant(index) {
-    this.bringToTop(index);
-    this.setName(index);
-  }
-
-  // Cycles through the options in a fixed shuffled order, slowing down,
-  // and lands exactly on `target` (which was decided and saved beforehand).
-  buildSequence(target) {
-    const n = this.cards.length;
-    const order = Utils.shuffled(this.cards.map((_, i) => i));
-    let pos = this.top === null ? -1 : order.indexOf(this.top);
+  buildSequence(target, inPlay) {
+    const ring = this.ringOrder(inPlay);
+    const m = ring.length;
+    const at = ring.indexOf(target);
+    if (m <= 1 || at === -1) return [target];
+    const hops = 3 * m + 3 + Math.floor(Math.random() * m); // a few laps
     const seq = [];
-    const minTicks = 13 + Math.floor(Math.random() * n);
-    while (seq.length < minTicks || seq[seq.length - 1] !== target) {
-      pos = (pos + 1) % n;
-      seq.push(order[pos]);
-    }
-    return seq;
+    for (let k = hops; k >= 0; k--) seq.push(ring[(((at - k) % m) + m) % m]);
+    return seq; // seq[last] = winner, seq[last - 1] = its neighbour (near-miss)
   }
 
-  buildIntervals(count) {
+  // How long the spotlight stays on each position: accelerating ease-out
+  // over ROLL_MS, then the long near-miss pause, then the final creep.
+  buildWaits(count) {
+    const run = Math.max(1, count - 2);
     const raw = [];
-    for (let k = 0; k < count; k++) {
-      const t = count > 1 ? k / (count - 1) : 1;
-      raw.push(45 + 340 * Math.pow(t, 2.2));
+    for (let k = 0; k < run; k++) {
+      const t = run > 1 ? k / (run - 1) : 1;
+      raw.push(45 + 330 * Math.pow(t, 2.4));
     }
-    const total = raw.slice(0, -1).reduce((a, b) => a + b, 0) || 1;
-    const scale = CONFIG.SHUFFLE_MS / total;
-    return raw.map(v => v * scale);
+    const scale = CONFIG.ROLL_MS / raw.reduce((a, b) => a + b, 0);
+    return [...raw.map(v => v * scale), CONFIG.NEAR_MISS_MS];
   }
 
-  async shuffleTo(target) {
-    const option = this.stage.options[target];
-    const imageReady = Utils.loadImage(option.image);
+  light(index, { creep = false } = {}) {
+    if (this.lit !== null) this.tiles[this.lit].classList.remove('is-lit', 'is-teeter', 'is-creep');
+    const tile = this.tiles[index];
+    tile.classList.toggle('is-creep', creep);
+    tile.classList.add('is-lit');
+    this.lit = index;
+  }
 
-    if (this.cards.length <= 1 || Utils.reducedMotion()) {
-      await Promise.race([imageReady, Utils.wait(CONFIG.IMAGE_WAIT_MS)]);
-      this.showInstant(target);
-      this.sound?.playSuccess();
-      return;
-    }
-
-    const seq = this.buildSequence(target);
-    const intervals = this.buildIntervals(seq.length);
-
-    Utils.vibrate([40, 30, 40]);
+  async spin(target, inPlay) {
+    const seq = this.buildSequence(target, inPlay);
+    const waits = this.buildWaits(seq.length);
+    this.el.classList.add('is-rolling');
     for (let k = 0; k < seq.length; k++) {
       const last = k === seq.length - 1;
-      // never reveal a half-loaded picture
-      if (last) await Promise.race([imageReady, Utils.wait(CONFIG.IMAGE_WAIT_MS)]);
-      this.bringToTop(seq[k], Math.min(260, intervals[k] * 0.95));
-      this.setName(seq[k], true);
+      this.light(seq[k], { creep: last });
+      if (k === seq.length - 2) this.tiles[seq[k]].classList.add('is-teeter');
       this.sound?.playSpin();
-      Utils.vibrate(8);
-      if (!last) await Utils.wait(intervals[k]);
+      Utils.vibrate(last ? 30 : 8);
+      if (!last) await Utils.wait(waits[k]);
     }
+  }
 
-    const card = this.cards[target];
-    Utils.restartAnimation(card, 'settle');
-    Utils.restartAnimation(this.nameEl, 'settle-name');
-    this.sound?.playSuccess();
-    Utils.vibrate([30, 50, 120]);
-    await Utils.wait(260);
+  // Lands straight on the winner (reduced motion / single option).
+  settle(target) {
+    this.el.classList.add('is-rolling');
+    this.light(target);
+  }
+
+  reset() {
+    this.el.classList.remove('is-rolling');
+    this.lit = null;
+    this.tiles.forEach(t => t.classList.remove('is-lit', 'is-teeter', 'is-creep', 'is-win', 'is-out'));
   }
 }
 
@@ -1324,7 +1320,7 @@ class DateRandomizerApp {
     this.storyImage = new StoryImage(this.stateManager);
     this.scenesEl = null;
     this.scene = null;
-    this.deck = null;
+    this.roulette = null;
     this.busy = false;
     this.introCount = 0;
     this.preloadedImages = [];
@@ -1404,13 +1400,13 @@ class DateRandomizerApp {
     this.timer.stop();
     this.closeRoute();
     this.scene = scene;
-    this.deck = null;
+    this.roulette = null;
 
     let view;
     switch (scene.type) {
       case 'intro': view = this.buildIntro(scene); break;
-      case 'question': view = this.buildQuestion(scene); break;
-      case 'draw': view = this.buildDraw(scene); break;
+      case 'question':
+      case 'draw': view = this.buildStage(scene); break;
       case 'wait': view = this.buildWait(scene); break;
       default: view = this.buildFinal(scene);
     }
@@ -1447,6 +1443,8 @@ class DateRandomizerApp {
   refit(root = this.scenesEl) {
     if (!root) return;
     root.querySelectorAll('.fit').forEach(el => Utils.fit(el, Number(el.dataset.fitMin) || 22));
+    const stages = root.classList?.contains('scene-stage') ? [root] : root.querySelectorAll('.scene-stage');
+    stages.forEach(s => this.layoutPool(s));
     const bodies = root.classList?.contains('scene-body') ? [root] : root.querySelectorAll('.scene-body');
     bodies.forEach(body => this.updateScrollHint(body));
   }
@@ -1586,21 +1584,115 @@ class DateRandomizerApp {
     }
   }
 
-  // ---------- stage: question ----------
+  // ---------- stage: question → roulette → reveal (one scene) ----------
+  //
+  // Phases (class on the scene): phase-pool (question + all options),
+  // phase-rolling (spotlight running), phase-revealed (big photo + name).
+  // Scene type is 'question' before a pick and 'draw' once one is saved.
 
-  buildQuestion(scene) {
+  buildStage(scene) {
     const i = scene.stageIndex;
     const stage = DATE_OPTIONS.stages[i];
-    const { el, body, actions } = this.makeScene('question');
+    const n = stage.options.length;
+    const cols = n <= 3 ? n : (n === 4 ? 2 : 3);
+    const ratio = stageRatio(i);
+    const { el, body } = this.makeScene('stage');
+    el.dataset.ratio = String(ratio);
+
     body.innerHTML = `
-      <p class="stage-number" aria-hidden="true">${Utils.pad2(i + 1)}</p>
-      <div class="question-block">
-        <h1 class="heading fit" data-fit-min="24">${Utils.escapeHtml(stage.question)}</h1>
+      <p class="draw-question">${Utils.escapeHtml(stage.question)}</p>
+      <h1 class="heading fit stage-head" data-fit-min="24">${Utils.headingHtml(stage.question)}</h1>
+      <div class="pool-block">
+        <p class="pool-label">${this.poolLabel(n)}</p>
+        <div class="pool" role="list" data-cols="${cols}" style="--cols: ${cols}"></div>
+      </div>
+      <div class="reveal" style="--r: ${ratio}">
+        <div class="hero-slot"></div>
+        <p class="option-name" aria-live="polite"></p>
+        <p class="draw-note"></p>
       </div>`;
-    actions.innerHTML = `<button class="btn" type="button">${Utils.icon('shuffle')}<span>Обрати варіант</span></button>`;
-    actions.querySelector('.btn').addEventListener('click', () => this.guard(() => this.startDraw(i)));
+
+    const pool = body.querySelector('.pool');
+    stage.options.forEach((option, index) => {
+      const tile = document.createElement('div');
+      tile.className = 'tile';
+      tile.setAttribute('role', 'listitem');
+      tile.dataset.index = String(index);
+      const photo = createPhoto(option, stage);
+      const cross = document.createElement('span');
+      cross.className = 'tile-x';
+      cross.innerHTML = Utils.icon('close');
+      photo.appendChild(cross);
+      const name = document.createElement('p');
+      name.className = 'tile-name';
+      name.textContent = option.text;
+      tile.append(photo, name);
+      pool.appendChild(tile);
+    });
+    this.roulette = new Roulette(pool, this.soundManager);
     this.preloadStageImages(i);
+
+    const selected = this.stateManager.getStage(i).selectedIndex;
+    if (scene.type === 'draw' && selected !== null) {
+      // restore: straight to the result, no replay
+      this.showResult(el, i, selected, { animate: false });
+    } else {
+      el.classList.add('phase-pool');
+      this.renderPoolActions(el, i);
+    }
     return { el };
+  }
+
+  poolLabel(count, again = false) {
+    const word = Utils.plural(count, 'варіант', 'варіанти', 'варіантів');
+    return again
+      ? `Залишилось ${count} — доля обере ще раз`
+      : `${count} ${word} — доля обере один`;
+  }
+
+  renderPoolActions(el, i) {
+    const actions = el.querySelector('.scene-actions');
+    actions.innerHTML = `<button class="btn" type="button" data-action="draw">${Utils.icon('shuffle')}<span>Обрати варіант</span></button>`;
+    actions.querySelector('.btn').addEventListener('click', () => this.guard(() => this.startDraw(i)));
+  }
+
+  renderResultActions(el, i) {
+    const actions = el.querySelector('.scene-actions');
+    actions.innerHTML = `
+      <button class="btn" type="button" data-action="confirm">${Utils.icon('check')}<span>Підтверджую!</span></button>
+      <div class="quiet-row"></div>`;
+    actions.querySelector('[data-action="confirm"]').addEventListener('click', () => this.guard(() => this.confirmStage(i)));
+    this.renderRerollRow(el, i);
+  }
+
+  // Tile photo height: as large as the 4:3 / 2:3 / 1:1 shape allows, but
+  // shrunk so the question, the pool and the button fit without scrolling.
+  layoutPool(sceneEl) {
+    const pool = sceneEl.querySelector('.pool');
+    if (!pool || sceneEl.classList.contains('phase-revealed')) return;
+    const body = sceneEl.querySelector('.scene-body');
+    const head = sceneEl.querySelector('.stage-head');
+    const label = sceneEl.querySelector('.pool-label');
+    const block = sceneEl.querySelector('.pool-block');
+    const first = pool.firstElementChild;
+    if (!body || !head || !label || !block || !first) return;
+
+    const cols = Number(pool.dataset.cols) || 2;
+    const rows = Math.ceil(pool.children.length / cols);
+    const ratio = Number(sceneEl.dataset.ratio) || 4 / 3;
+    const ps = getComputedStyle(pool);
+    const gapX = parseFloat(ps.columnGap) || 0;
+    const gapY = parseFloat(ps.rowGap) || 0;
+    const colW = (pool.clientWidth - gapX * (cols - 1)) / cols;
+    const nameH = first.querySelector('.tile-name')?.offsetHeight || 36;
+    const tileGap = parseFloat(getComputedStyle(first).rowGap) || 8;
+    const bs = getComputedStyle(body);
+    const inner = body.clientHeight - parseFloat(bs.paddingTop) - parseFloat(bs.paddingBottom);
+    const used = head.offsetHeight + label.offsetHeight +
+      parseFloat(getComputedStyle(label).marginBottom) + parseFloat(getComputedStyle(block).paddingTop);
+    const room = (inner - used - gapY * (rows - 1)) / rows - nameH - tileGap;
+    const h = Math.max(64, Math.min(colW / ratio, 236, room));
+    pool.style.setProperty('--tile-h', `${Math.floor(h)}px`);
   }
 
   preloadStageImages(index) {
@@ -1617,55 +1709,108 @@ class DateRandomizerApp {
     return Utils.randomItem(pool);
   }
 
+  currentSceneEl() {
+    return this.scenesEl.querySelector('.scene:last-child');
+  }
+
   async startDraw(i) {
     const st = this.stateManager.getStage(i);
     if (st.confirmed) return;
+    const el = this.currentSceneEl();
     if (st.selectedIndex !== null) {
-      await this.show({ type: 'draw', stageIndex: i, mode: 'restore' });
+      this.showResult(el, i, st.selectedIndex, { animate: false });
       return;
     }
-    // The result is decided and saved BEFORE the reveal, so a reload
-    // mid-shuffle can't hand out a free extra draw.
+    // The result is decided and saved BEFORE the roulette, so a reload
+    // mid-draw can't hand out a free extra draw.
     const target = this.pickIndex(i);
     this.stateManager.updateStage(i, { selectedIndex: target });
+    this.scene = { type: 'draw', stageIndex: i };
     this.soundManager.playClick();
-    await this.show({ type: 'draw', stageIndex: i, mode: 'shuffle', target });
+    await this.runDraw(el, i, target, null);
   }
 
-  // ---------- stage: draw & result ----------
-
-  buildDraw(scene) {
-    const i = scene.stageIndex;
+  async runDraw(el, i, target, excluded) {
     const stage = DATE_OPTIONS.stages[i];
-    const { el, body, actions } = this.makeScene('draw');
-    body.innerHTML = `
-      <p class="draw-question">${Utils.escapeHtml(stage.question)}</p>
-      <div class="deck-area">
-        <div class="deck" style="--r: ${stageRatio(i)}"></div>
-        <p class="option-name" aria-live="polite"></p>
-        <p class="draw-note"></p>
-      </div>`;
-    actions.innerHTML = `
-      <button class="btn" type="button" data-action="confirm">${Utils.icon('check')}<span>Підтверджую!</span></button>
-      <div class="quiet-row"></div>`;
+    this.setActionsVisible(el, false);
+    el.classList.add('phase-rolling');
 
-    const deck = new Deck(body.querySelector('.deck'), body.querySelector('.option-name'), stage, this.soundManager);
-    this.deck = deck;
+    // every picture should be in before the spotlight starts (they are
+    // already on screen, so this is normally instant)
+    await Promise.race([
+      Promise.all(stage.options.map(o => Utils.loadImage(o.image))),
+      Utils.wait(1500)
+    ]);
 
-    actions.querySelector('[data-action="confirm"]').addEventListener('click', () => this.guard(() => this.confirmStage(i)));
+    const inPlay = stage.options.map((_, k) => k).filter(k => k !== excluded);
+    el.querySelector('.pool-label').textContent = excluded === null ? 'Доля обирає…' : 'Доля обирає ще раз…';
+    if (Utils.reducedMotion() || inPlay.length <= 1) {
+      this.roulette.settle(target);
+    } else {
+      await this.roulette.spin(target, inPlay);
+    }
+    await this.showResult(el, i, target, { animate: !Utils.reducedMotion() });
+  }
 
-    const after = async () => {
-      if (scene.mode === 'shuffle') {
-        this.setActionsVisible(el, false);
-        await deck.shuffleTo(scene.target);
-      } else {
-        deck.showInstant(this.stateManager.getStage(i).selectedIndex);
-      }
-      this.renderRerollRow(el, i);
-      this.setActionsVisible(el, true);
-      this.refit(el);
-    };
-    return { el, after };
+  // Winner grows from its tile into the big photo (FLIP), losers drop away.
+  async showResult(el, i, target, { animate = true } = {}) {
+    const stage = DATE_OPTIONS.stages[i];
+    const option = stage.options[target];
+    const slot = el.querySelector('.hero-slot');
+    const nameEl = el.querySelector('.option-name');
+    const question = el.querySelector('.draw-question');
+
+    const hero = createPhoto(option, stage, 'hero');
+    slot.replaceChildren(hero);
+
+    const tile = this.roulette?.tiles[target];
+    let from = null;
+    // (restore / reduced motion take the synchronous path: no awaits, no flash)
+    if (animate && tile && !el.classList.contains('phase-revealed')) {
+      this.setActionsVisible(el, false);
+      const heroImg = hero.querySelector('img');
+      const decoded = typeof heroImg.decode === 'function' ? heroImg.decode().catch(() => {}) : Promise.resolve();
+      await Promise.race([decoded, Utils.wait(CONFIG.IMAGE_WAIT_MS)]);
+      Utils.restartAnimation(tile, 'is-win');
+      this.soundManager.playSuccess();
+      Utils.vibrate([30, 50, 120]);
+      await Utils.wait(300);
+      this.roulette.tiles.forEach(t => { if (t !== tile) t.classList.add('is-out'); });
+      el.querySelector('.stage-head')?.classList.add('is-out');
+      el.querySelector('.pool-label')?.classList.add('is-out');
+      await Utils.wait(260);
+      from = tile.querySelector('.photo').getBoundingClientRect();
+    }
+
+    // The (taller) result controls are rendered only now, in the same frame
+    // the pool is replaced, so nothing visible jumps.
+    this.renderResultActions(el, i);
+    if (from) this.setActionsVisible(el, false);
+    el.classList.remove('phase-pool', 'phase-rolling');
+    el.classList.add('phase-revealed');
+    nameEl.textContent = option.text;
+    Utils.fit(nameEl, 18);
+
+    if (from) {
+      const to = hero.getBoundingClientRect();
+      const s = from.width / to.width;
+      const dx = (from.left + from.width / 2) - (to.left + to.width / 2);
+      const dy = (from.top + from.height / 2) - (to.top + to.height / 2);
+      const grow = hero.animate(
+        [{ transform: `translate(${dx}px, ${dy}px) scale(${s})` }, { transform: 'none' }],
+        { duration: 560, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)', fill: 'backwards' }
+      );
+      Utils.restartAnimation(question, 'fade-up');
+      nameEl.style.animationDelay = '180ms';
+      Utils.restartAnimation(nameEl, 'fade-up');
+      await grow.finished.catch(() => {});
+      const r = hero.getBoundingClientRect();
+      this.burst(null, { x: (r.left + r.width / 2) / innerWidth, y: (r.top + r.height / 2) / innerHeight });
+    }
+
+    this.setActionsVisible(el, true);
+    if (from) Utils.restartAnimation(el.querySelector('.scene-actions'), 'fade-up');
+    this.refit(el);
   }
 
   setActionsVisible(el, visible) {
@@ -1676,13 +1821,14 @@ class DateRandomizerApp {
   renderRerollRow(el, i) {
     const row = el.querySelector('.quiet-row');
     const note = el.querySelector('.draw-note');
+    if (!row || !note) return;
     const left = this.stateManager.getRerollsLeft(i);
     if (left > 0) {
       row.innerHTML = `<button class="btn-quiet" type="button" data-action="reroll">${Utils.icon('refresh')}<span>Інший варіант</span></button>`;
       row.querySelector('button').addEventListener('click', () => this.guard(() => this.reroll(i)));
       note.textContent = left === 1
         ? 'Передумати можна лише раз 😉'
-        : `Передумати можна ще ${left} ${left >= 5 ? 'разів' : 'рази'} 😉`;
+        : `Передумати можна ще ${left} ${Utils.plural(left, 'раз', 'рази', 'разів')} 😉`;
     } else {
       row.innerHTML = '<p class="quiet-line">🔮 Доля сказала своє слово!</p>';
       note.textContent = '';
@@ -1690,20 +1836,59 @@ class DateRandomizerApp {
   }
 
   // "Інший варіант": limited by CONFIG.MAX_REROLLS, never returns the option
-  // that was just rejected, saved before the reveal, and shuffles right away.
+  // that was just rejected (it stays crossed out), saved before the roulette.
   async reroll(i) {
     const st = this.stateManager.getStage(i);
-    if (st.confirmed || st.selectedIndex === null || !this.deck) return;
+    if (st.confirmed || st.selectedIndex === null || !this.roulette) return;
     if (this.stateManager.getRerollsLeft(i) <= 0) return;
 
-    const target = this.pickIndex(i, st.selectedIndex);
+    const rejected = st.selectedIndex;
+    const target = this.pickIndex(i, rejected);
     this.stateManager.updateStage(i, { selectedIndex: target, rerollsUsed: (st.rerollsUsed || 0) + 1 });
 
-    const el = this.deck.el.closest('.scene');
+    const el = this.currentSceneEl();
+    await this.backToPool(el, i, rejected);
+    await this.runDraw(el, i, target, rejected);
+  }
+
+  // Shrinks the big photo back into its tile, brings the others back and
+  // crosses the rejected one out.
+  async backToPool(el, i, rejected) {
+    const stage = DATE_OPTIONS.stages[i];
+    const animate = !Utils.reducedMotion();
     this.setActionsVisible(el, false);
-    await this.deck.shuffleTo(target);
-    this.renderRerollRow(el, i);
-    this.setActionsVisible(el, true);
+    const heroEl = el.querySelector('.hero');
+    const from = heroEl?.getBoundingClientRect();
+
+    this.roulette.reset();
+    const label = el.querySelector('.pool-label');
+    label.textContent = this.poolLabel(stage.options.length - 1, true);
+    el.querySelector('.stage-head')?.classList.remove('is-out');
+    label.classList.remove('is-out');
+    el.classList.remove('phase-revealed');
+    el.classList.add('phase-pool');
+    el.querySelector('.option-name').textContent = '';
+    this.renderPoolActions(el, i);
+    this.setActionsVisible(el, false);
+    this.refit(el);
+
+    const tile = this.roulette.tiles[rejected];
+    if (animate && from && tile) {
+      const photo = tile.querySelector('.photo');
+      const to = photo.getBoundingClientRect();
+      const s = from.width / to.width;
+      const dx = (from.left + from.width / 2) - (to.left + to.width / 2);
+      const dy = (from.top + from.height / 2) - (to.top + to.height / 2);
+      this.roulette.tiles.forEach(t => { if (t !== tile) Utils.restartAnimation(t, 'fade-up'); });
+      await photo.animate(
+        [{ transform: `translate(${dx}px, ${dy}px) scale(${s})` }, { transform: 'none' }],
+        { duration: 460, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)', fill: 'backwards' }
+      ).finished.catch(() => {});
+      this.roulette.tiles.forEach(t => t.classList.remove('fade-up'));
+    }
+    tile?.classList.add('is-rejected');
+    Utils.vibrate(20);
+    if (animate) await Utils.wait(650);
   }
 
   async confirmStage(i) {
@@ -1727,7 +1912,7 @@ class DateRandomizerApp {
     await this.show({ type: 'wait', stageIndex: i });
   }
 
-  burst(colors) {
+  burst(colors, origin = { y: 0.72 }) {
     if (typeof confetti !== 'function') return;
     const c = this.chapter || Color.chapter(PALETTE.cream);
     try {
@@ -1737,7 +1922,7 @@ class DateRandomizerApp {
         startVelocity: 38,
         ticks: 150,
         scalar: 0.9,
-        origin: { y: 0.72 },
+        origin,
         colors: colors || [c.fg, c.dark ? PALETTE.cream : PALETTE.ink, PALETTE.accent, c.surface],
         disableForReducedMotion: true
       });
@@ -1824,8 +2009,8 @@ class DateRandomizerApp {
     actions.innerHTML = `<button class="btn btn-pop" type="button">${isFarewell ? 'До фіналу' : 'Відкрити наступний етап'}${Utils.icon('arrow')}</button>`;
     actions.querySelector('.btn').addEventListener('click', () => this.guard(() => this.openNext()));
 
+    // The new label + button popping in is the signal; no toast over the header.
     if (!silent) {
-      Toast.show(isFarewell ? 'Фінал готовий! 🎉' : 'Наступний етап готовий! 🎉', 'success');
       this.soundManager.playUnlock();
       Utils.vibrate([80, 60, 80]);
     }
