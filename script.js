@@ -47,6 +47,12 @@ const CONFIG = {
 //   image — шлях до картинки в папці images/, наприклад "images/Kino_novyi.jpg".
 //           Назва файлу без пробілів, а великі й малі літери мають точно
 //           збігатися з назвою файлу (GitHub Pages їх розрізняє).
+//   map   — (необов'язково) посилання на Google Maps, напр. "https://maps.app.goo.gl/...";
+//           тоді з'явиться кнопка «Як дістатися» (на результаті, під час паузи й у маршруті).
+//           Посилання беремо в Google Maps: «Поділитися» → «Копіювати посилання».
+//   mapHint — (необов'язково) коротка підказка біля кнопки, напр. "у ТЦ «Гулівер»".
+//   fit   — (необов'язково) "contain" для логотипів: показати картинку цілою на білій
+//           картці, без обрізання. Замалі картинки й так показуються в рамці, без розмиття.
 //   color — (у етапу, необов'язково) колір фону цього етапу, напр. "#D4874A";
 //           колір тексту (темний чи світлий) підбереться автоматично.
 //   icon  — більше не використовується (лишилось від старого дизайну), можна не чіпати.
@@ -63,10 +69,10 @@ const DATE_OPTIONS = {
       emoji: "☕",
       color: "#D4874A",
       options: [
-        { text: "Parcoffka", image: "images/Kava_Parcoffka.jpg" },
-        { text: "Кав'ярня «Кориця»", image: "images/Kava_koriza.jpg" },
-        { text: "Бар «HIWAY»", image: "images/Kava_near_bik.jpg" },
-        { text: "Вільна зона", image: "images/Kava_vilna_zona.jpg" }
+        { text: "Кава на WOG", image: "images/Kava_wog.jpg", map: "https://maps.app.goo.gl/biPR1XYGzDe1pajSA" },
+        { text: "25th hour", image: "images/Kava_25thhour.jpg", map: "https://maps.app.goo.gl/wXZu7xbZhrnazd587" },
+        { text: "Craft Coffee", image: "images/Kava_craft.jpg", fit: "contain", map: "https://maps.app.goo.gl/QCfKxB5D33t7jDSWA", mapHint: "у ТЦ «Гулівер»" },
+        { text: "Кав'ярня «Панорама»", image: "images/Kava_panorama.jpeg", map: "https://maps.app.goo.gl/q4pSctEGf5hMDTpP9" }
       ]
     },
     {
@@ -89,10 +95,10 @@ const DATE_OPTIONS = {
       emoji: "🍽️",
       color: "#F05A3A",
       options: [
-        { text: "Buon Fratelli", image: "images/Rest_Bioni.jpg" },
-        { text: "BROOKS eats & drinks", image: "images/Rest_brooks.jpg" },
-        { text: "Flip NEO", image: "images/Rest_flipneo.jpg" },
-        { text: "Giannivino", image: "images/Rest_Giannivino.jpg" }
+        { text: "Buon Fratelli", image: "images/Rest_Bioni.jpg", map: "https://maps.app.goo.gl/ZBFzjPnsN9TZC2Vy7" },
+        { text: "BROOKS eats & drinks", image: "images/Rest_brooks.jpg", map: "https://maps.app.goo.gl/CC2tx2MMESCRtA659" },
+        { text: "Spoon", image: "images/Rest_Spoon.jpg", map: "https://maps.app.goo.gl/u9P5g5pHCpZYfqaMA" },
+        { text: "Giannivino", image: "images/Rest_Giannivino.jpg", map: "https://maps.app.goo.gl/hXaLMcv7wfkN4kCu7" }
       ]
     },
     {
@@ -257,14 +263,19 @@ class Utils {
 }
 
 // Picture with a neat fallback: if the image fails, the stage emoji shows instead.
+// fit: "contain" (logos) → whole image on a white card instead of a crop.
 function createPhoto(option, stage, className = '') {
   const wrap = document.createElement('div');
   wrap.className = `photo ${className}`.trim();
+  if (option.fit === 'contain') wrap.classList.add('is-contain');
 
   const img = new Image();
   img.alt = option.text;
   img.decoding = 'async';
-  img.addEventListener('load', () => wrap.classList.remove('is-failed'));
+  img.addEventListener('load', () => {
+    wrap.classList.remove('is-failed');
+    checkLowRes(wrap);
+  });
   img.addEventListener('error', () => wrap.classList.add('is-failed'));
 
   const placeholder = document.createElement('span');
@@ -275,6 +286,41 @@ function createPhoto(option, stage, className = '') {
   wrap.append(img, placeholder);
   img.src = option.image;
   return wrap;
+}
+
+// A picture that would be blown up more than ~1.4× (blurry) is shown at its
+// own size on a soft frame instead. Only measurable once the box is visible.
+function checkLowRes(wrap) {
+  const img = wrap?.querySelector('img');
+  if (!img || !img.naturalWidth || wrap.classList.contains('is-contain')) return;
+  const w = wrap.clientWidth;
+  const h = wrap.clientHeight;
+  if (!w || !h) return;
+  const upscale = Math.max(w / img.naturalWidth, h / img.naturalHeight);
+  wrap.classList.toggle('is-lowres', upscale > 1.4);
+}
+
+// "Як дістатися" — Google Maps link for a chosen place (null when no map).
+function createMapLink(option, { compact = false } = {}) {
+  if (!option?.map || !/^https:\/\//.test(option.map)) return null;
+  const a = document.createElement('a');
+  a.className = compact ? 'map-pin' : 'map-link';
+  a.href = option.map;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  if (compact) {
+    a.setAttribute('aria-label', `Як дістатися: ${option.text}`);
+    a.innerHTML = Utils.icon('pin');
+  } else {
+    a.innerHTML = `${Utils.icon('pin')}<span>Як дістатися</span>`;
+    if (option.mapHint) {
+      const hint = document.createElement('span');
+      hint.className = 'map-hint';
+      hint.textContent = option.mapHint;
+      a.appendChild(hint);
+    }
+  }
+  return a;
 }
 
 function stageColor(index) {
@@ -569,15 +615,52 @@ class ConversationTopics {
     return topics?.[Number(index)] ?? null;
   }
 
+  // Collapsed by default into one quiet row; the choice is remembered for the session.
+  isOpen() {
+    try {
+      return sessionStorage.getItem('topicsOpen') === '1';
+    } catch (e) {
+      return false;
+    }
+  }
+
+  setOpen(open) {
+    try {
+      sessionStorage.setItem('topicsOpen', open ? '1' : '0');
+    } catch (e) {
+      // private mode etc. — just not remembered
+    }
+  }
+
   render({ fresh = false } = {}) {
-    const card = document.createElement('section');
+    const wrap = document.createElement('section');
+    wrap.className = 'topics';
+    wrap.setAttribute('aria-label', 'Ідеї для розмови');
+    wrap.innerHTML = `
+      <button class="topics-toggle" type="button" aria-expanded="false" aria-controls="topicCard">
+        <span>💬 Про що поговорити?</span>${Utils.icon('chevron', 'chev')}
+      </button>`;
+    const card = document.createElement('div');
     card.className = 'topic-card';
-    card.setAttribute('aria-label', 'Ідеї для розмови');
+    card.id = 'topicCard';
+    wrap.appendChild(card);
+
+    const toggle = wrap.querySelector('.topics-toggle');
+    const apply = (open) => {
+      wrap.classList.toggle('is-open', open);
+      toggle.setAttribute('aria-expanded', String(open));
+      card.hidden = !open;
+    };
+    apply(this.isOpen());
+    toggle.addEventListener('click', () => {
+      const open = !wrap.classList.contains('is-open');
+      apply(open);
+      this.setOpen(open);
+      Utils.vibrate(10);
+      if (open) Utils.restartAnimation(card, 'fade-up');
+    });
+
     card.innerHTML = `
-      <div class="topic-head">
-        <p class="topic-title">Ідеї для розмови</p>
-        <p class="topic-sub">Якщо раптом не знаєте, про що поговорити…</p>
-      </div>
       <div class="chips" role="group" aria-label="Тема"></div>
       <p class="topic-text"></p>
       <div class="topic-actions">
@@ -603,7 +686,7 @@ class ConversationTopics {
     } else {
       this.next();
     }
-    return card;
+    return wrap;
   }
 
   renderChips() {
@@ -1150,11 +1233,21 @@ class StoryImage {
       ctx.fill();
 
       const img = images[i];
+      const chosen = st.selectedIndex !== null ? stage.options[st.selectedIndex] : null;
       ctx.save();
       ctx.beginPath();
       ctx.arc(cx, cy, D / 2, 0, Math.PI * 2);
       ctx.clip();
-      if (img) {
+      if (img && chosen?.fit === 'contain') {
+        // logos: whole picture on white, no crop
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(cx - D / 2, cy - D / 2, D, D);
+        const box = D * 0.74;
+        const scale = Math.min(box / img.naturalWidth, box / img.naturalHeight);
+        const w = img.naturalWidth * scale;
+        const h = img.naturalHeight * scale;
+        ctx.drawImage(img, cx - w / 2, cy - h / 2, w, h);
+      } else if (img) {
         const scale = Math.max(D / img.naturalWidth, D / img.naturalHeight);
         const w = img.naturalWidth * scale;
         const h = img.naturalHeight * scale;
@@ -1609,6 +1702,7 @@ class DateRandomizerApp {
       <div class="reveal" style="--r: ${ratio}">
         <div class="hero-slot"></div>
         <p class="option-name" aria-live="polite"></p>
+        <div class="map-slot"></div>
         <p class="draw-note"></p>
       </div>`;
 
@@ -1790,8 +1884,14 @@ class DateRandomizerApp {
     el.classList.add('phase-revealed');
     nameEl.textContent = option.text;
     Utils.fit(nameEl, 18);
+    const mapSlot = el.querySelector('.map-slot');
+    const mapLink = createMapLink(option);
+    mapSlot.replaceChildren(...(mapLink ? [mapLink] : []));
+    checkLowRes(hero); // now that the big photo has its real size
 
     if (from) {
+      mapSlot.style.animationDelay = '260ms';
+      Utils.restartAnimation(mapSlot, 'fade-up');
       const to = hero.getBoundingClientRect();
       const s = from.width / to.width;
       const dx = (from.left + from.width / 2) - (to.left + to.width / 2);
@@ -1954,6 +2054,9 @@ class DateRandomizerApp {
         <p class="countdown" role="timer" aria-label="Зворотний відлік"></p>
       </div>`;
     body.querySelector('.chosen-thumb').appendChild(createPhoto(option, stage));
+    // directions right where they set off
+    const mapLink = createMapLink(option);
+    if (mapLink) body.querySelector('.chosen-text').appendChild(mapLink);
     // a fresh question for every new pause; the same one after a reload/re-render
     const freshTopic = this.topicsForStage !== i;
     this.topicsForStage = i;
@@ -2111,6 +2214,9 @@ class DateRandomizerApp {
           <p class="route-name">Поки що секрет 🤫</p>`;
       }
       li.append(thumb, text);
+      // directions only for places already chosen — never for a locked stage
+      const pin = item.state === 'done' ? createMapLink(item.option, { compact: true }) : null;
+      if (pin) li.appendChild(pin);
       list.appendChild(li);
     });
   }
