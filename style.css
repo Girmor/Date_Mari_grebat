@@ -351,12 +351,51 @@ body {
   box-shadow: var(--shadow-lg);
   z-index: var(--z-timer);
   opacity: 0;
+  pointer-events: none;
   transition: all var(--transition-normal);
+  /* long-press target: no selection, magnifier or callout menu */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: none;
 }
 
 .global-timer.active {
   opacity: 1;
+  pointer-events: auto;
   transform: translateX(-50%) translateY(0);
+}
+
+.timer-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.15;
+}
+
+.timer-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* Solid pill so the countdown stays readable over any card or theme */
+.global-timer {
+  background: rgba(45, 27, 64, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.global-timer .timer-text {
+  color: #ffffff;
+}
+
+.global-timer .timer-label {
+  color: #e0c3fc;
+}
+
+.timer-label:empty {
+  display: none;
 }
 
 .global-timer i {
@@ -397,6 +436,15 @@ body {
   visibility: hidden;
   pointer-events: none;
   transition: opacity 0.4s ease, visibility 0.4s ease;
+  /* a card taller than the phone screen must scroll, not get clipped */
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* auto margins centre the card when it fits and keep its top reachable when it doesn't */
+.screen > .card {
+  margin-top: auto;
+  margin-bottom: auto;
 }
 
 .screen.active {
@@ -833,6 +881,7 @@ body {
 .stage-card {
   max-width: 550px;
   margin: var(--space-lg) auto;
+  scroll-margin-top: 72px;
   padding: var(--space-lg);
   transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
   animation: stage-appear 0.6s ease backwards;
@@ -866,9 +915,13 @@ body {
 }
 
 .stage-card.locked {
-  filter: blur(6px);
   pointer-events: none;
   transform: scale(0.98);
+}
+
+/* Blur the card's content but keep the lock + teaser on top readable */
+.stage-card.locked > :not(.stage-lock-overlay) {
+  filter: blur(6px);
 }
 
 .stage-card.unlocked {
@@ -1073,6 +1126,22 @@ body {
   display: flex;
 }
 
+.btn-retry.hidden {
+  display: none;
+}
+
+.reroll-note {
+  margin: 0;
+  text-align: center;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.reroll-note:empty {
+  display: none;
+}
+
 /* Lock Overlay */
 .stage-lock-overlay {
   position: absolute;
@@ -1113,6 +1182,33 @@ body {
 .stage-lock-overlay p {
   font-size: 1.1rem;
   color: var(--text-secondary);
+}
+
+.stage-lock-overlay {
+  border-radius: inherit;
+  text-align: center;
+  padding: var(--space-md);
+}
+
+.stage-lock-overlay .lock-title {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #2d1b4e;
+}
+
+.stage-lock-overlay .lock-teaser {
+  font-size: 1.05rem;
+  font-weight: 500;
+  color: #5a4069;
+}
+
+[data-theme="dark"] .stage-lock-overlay .lock-title {
+  color: #f0e6ff;
+}
+
+[data-theme="dark"] .stage-lock-overlay .lock-teaser {
+  color: #c8b8d8;
 }
 
 /* ============================================
@@ -1239,6 +1335,8 @@ body {
   flex-direction: column;
   gap: var(--space-sm);
   z-index: var(--z-toast);
+  /* toasts are informational only: taps go through to the buttons below */
+  pointer-events: none;
 }
 
 .toast {
@@ -2283,6 +2381,12 @@ body {
   padding: var(--space-xl) 0;
 }
 
+/* The face-down tarot card is shown before the first spin (no blank gap) */
+.option-display.mystic-display {
+  opacity: 1;
+  transform: none;
+}
+
 /* 3D картка обгортка */
 .mystic-card-wrapper {
   width: 100%;
@@ -2348,6 +2452,31 @@ body {
   height: 100%;
   object-fit: cover;
   filter: brightness(1.1) contrast(1.1);
+}
+
+/* Placeholder when an option image fails to load */
+.image-placeholder {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 5rem;
+  background: radial-gradient(circle at 50% 40%, rgba(181, 101, 216, 0.45), transparent 70%);
+}
+
+.mystic-card-back.image-failed .image-placeholder {
+  display: flex;
+}
+
+.mystic-card-back.image-failed .mystic-image {
+  display: none;
+}
+
+/* While the card spins, its face stays blank until the new picture is ready */
+.mystic-card-back.is-loading .mystic-image,
+.mystic-card-back.is-loading .image-placeholder {
+  visibility: hidden;
 }
 
 .image-mystic-frame {
@@ -2489,6 +2618,11 @@ body[data-theme="mystic"] .particles {
   filter: drop-shadow(0 0 3px var(--mystic-particle-color, #FFD700));
 }
 
+/* No empty name box before a card has been drawn */
+.mystic-name:empty {
+  visibility: hidden;
+}
+
 /* Responsive adjustments */
 @media (max-width: 768px) {
   .mystic-card-wrapper {
@@ -2501,6 +2635,25 @@ body[data-theme="mystic"] .particles {
 
   .mystic-name {
     font-size: 1.4rem;
+  }
+}
+
+/* Phones: keep the question, the card and the button on one screen */
+@media (max-width: 480px) {
+  .mystic-carousel-container {
+    padding: var(--space-sm) 0;
+  }
+
+  .mystic-card-wrapper {
+    max-width: min(260px, 30vh);
+  }
+
+  .card-back-pattern {
+    font-size: 5rem;
+  }
+
+  .mystic-name {
+    margin-top: var(--space-sm);
   }
 }
 

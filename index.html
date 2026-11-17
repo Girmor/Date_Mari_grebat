@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="description" content="Інтерактивний рандомізатор подій для незабутнього побачення">
+  <meta name="description" content="Інтерактивний рандомізатор пригод для незабутнього дня">
   <meta name="theme-color" content="#ff6b81">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -46,9 +46,12 @@
   </nav>
 
   <!-- Global Timer -->
-  <aside id="globalTimer" class="global-timer" role="timer" aria-live="polite">
+  <aside id="globalTimer" class="global-timer" role="timer" aria-live="off">
     <i class="fas fa-hourglass-half"></i>
-    <span class="timer-text"></span>
+    <div class="timer-body">
+      <span class="timer-label"></span>
+      <span class="timer-text"></span>
+    </div>
   </aside>
 
   <!-- Conversation Topics Container -->
@@ -57,19 +60,19 @@
   <!-- Intro Screens -->
   <section id="intro-1" class="screen intro-screen active" data-step="intro-1">
     <div class="floating-icons" aria-hidden="true">
-      <span class="float-icon">☕</span>
-      <span class="float-icon">🥐</span>
-      <span class="float-icon">🚶</span>
+      <span class="float-icon">✨</span>
+      <span class="float-icon">🎲</span>
+      <span class="float-icon">🎈</span>
       <span class="float-icon">💫</span>
-      <span class="float-icon">🎬</span>
+      <span class="float-icon">🗺️</span>
     </div>
     <article class="card glass-card">
       <div class="card-glow"></div>
       <h1 class="title-fancy">
-        <span class="title-line">Привіт!</span>
+        <span class="title-line">Привіт, Мері!</span>
         <span class="title-emoji">😊</span>
       </h1>
-      <p class="subtitle">Радий тебе бачити. Давай проведемо разом весело час.</p>
+      <p class="subtitle">Радий тебе бачити! Давай весело проведемо час разом.</p>
       <button class="btn btn-primary btn-glow" data-next="intro-2">
         <span>Продовжити</span>
         <i class="fas fa-arrow-right"></i>
@@ -114,8 +117,9 @@
         <span class="title-emoji">🎲</span>
       </h1>
       <p class="description">
-        Ти будеш обирати події, локації або заходи, натискаючи кнопку <strong>«Обрати»</strong>, 
-        після чого випадковим чином відкриється цікава ідея для нашої зустрічі!
+        Натискаючи кнопку <strong>«Обрати варіант»</strong>, ти обиратимеш події та локації —
+        а випадок підкаже цікаву ідею для нашої зустрічі!
+        А якщо варіант не до душі, на кожному етапі можна <strong>один раз</strong> попросити інший 😉
       </p>
       <button class="btn btn-primary btn-glow" data-next="intro-4">
         <span>Продовжити</span>
@@ -136,8 +140,8 @@
         <i class="fas fa-lock lock-icon"></i>
       </div>
       <p class="description">
-        Кожна наступна подія буде тимчасово <strong>«заморожена»</strong> і залишатиметься секретом 🤫. 
-        Щоб її розблокувати, потрібно провести хоча б <strong>15 хвилин</strong> на попередній локації.
+        Кожна наступна подія буде тимчасово <strong>«заморожена»</strong> й залишатиметься секретом 🤫.
+        Щоб її розблокувати, потрібно провести щонайменше <strong>15 хвилин</strong> на попередній локації.
       </p>
       <button class="btn btn-primary btn-glow" data-next="intro-5">
         <span>Продовжити</span>
@@ -150,7 +154,7 @@
     <div class="floating-icons" aria-hidden="true">
       <span class="float-icon">🎉</span>
       <span class="float-icon">🚀</span>
-      <span class="float-icon">💖</span>
+      <span class="float-icon">🎈</span>
       <span class="float-icon">🌟</span>
     </div>
     <article class="card glass-card">
@@ -178,7 +182,7 @@
   <!-- Final Screen -->
   <section id="final" class="screen final-screen" data-step="final">
     <div class="floating-icons celebration" aria-hidden="true">
-      <span class="float-icon">💖</span>
+      <span class="float-icon">🎉</span>
       <span class="float-icon">⭐</span>
       <span class="float-icon">🎊</span>
       <span class="float-icon">✨</span>
@@ -191,7 +195,7 @@
         <span class="title-line">Дякую!</span>
         <span class="title-emoji">🤗</span>
       </h1>
-      <p class="subtitle">Я дуже радий був провести з тобою час!</p>
+      <p class="subtitle">Дуже радий, що ми провели цей день разом!</p>
       
       <!-- Roadmap Container -->
       <div id="roadmapContainer" class="roadmap-container"></div>
@@ -200,7 +204,7 @@
       <div class="rating-section">
         <p class="rating-prompt">Оціни цей день:</p>
         <div class="emoji-rating" role="group" aria-label="Оцінка дня">
-          <button class="emoji-btn" data-rating="inlove" aria-label="Закохано">😍</button>
+          <button class="emoji-btn" data-rating="excited" aria-label="У захваті">🤩</button>
           <button class="emoji-btn" data-rating="laughing" aria-label="Дуже весело">😂</button>
           <button class="emoji-btn" data-rating="happy" aria-label="Добре">😊</button>
           <button class="emoji-btn" data-rating="neutral" aria-label="Нормально">😐</button>
@@ -209,9 +213,9 @@
         </div>
       </div>
       
-      <button id="downloadRoadmap" class="btn btn-secondary">
+      <button id="downloadRoadmap" class="btn btn-primary">
         <i class="fas fa-download"></i>
-        <span>Завантажити роудмеп</span>
+        <span>Зберегти як картинку</span>
       </button>
     </article>
   </section>

@@ -1,27 +1,51 @@
 /**
  * Date Randomizer - Modern ES6+ Implementation
- * Інтерактивний рандомізатор подій для побачення
+ * Інтерактивний рандомізатор подій для веселого дня
  */
 
 // ============================================
 // CONFIGURATION
 // ============================================
 
+// Службові параметри адреси (для репетиції власником):
+//   ?fast=1  — пауза між етапами 5 секунд замість 15 хвилин;
+//   ?reset=1 — стерти збережений прогрес і почати з чистого аркуша.
+const URL_PARAMS = new URLSearchParams(window.location.search);
+const FAST_MODE = URL_PARAMS.get('fast') === '1';
+
 const CONFIG = {
-  DELAY_MS: 5 * 1000, // 5 секунд для тестування (змініть на 15 * 60 * 1000 для 15 хвилин)
-  STORAGE_KEY: 'dateRandomizerState_v2',
+  DELAY_MS: FAST_MODE ? 5 * 1000 : 15 * 60 * 1000, // пауза між етапами
+  MAX_REROLLS: 1, // скільки разів на етапі можна натиснути «Інший варіант»
+  OWNER_SKIP_HOLD_MS: 1500, // утримання таймера, щоб одразу завершити очікування
+  IMAGE_WAIT_MS: 4000, // скільки максимум чекати картинку перед переворотом карти
+  STORAGE_KEY: 'dateRandomizerState_v3',
+  LEGACY_STORAGE_KEYS: ['dateRandomizerState_v2', 'dateRandomizerState'],
   USER_ID_KEY: 'dateRandomizerUserId',
+  FAVORITES_KEY: 'favoriteTopics',
   SPIN_DURATION: 2500,
   SPIN_INTERVAL: 80,
   SOUNDS_ENABLED_KEY: 'soundsEnabled',
   THEME_KEY: 'dateRandomizerTheme'
 };
 
+// ============================================
+// ✏️ КОНТЕНТ — РЕДАГУЙ ТУТ
+// ============================================
+// Етапи йдуть саме в такому порядку, як записані нижче.
+// Кожен варіант — це рядок { text: "...", image: "..." }:
+//   text  — назва, яку побачить Мері;
+//   image — шлях до картинки в папці images/, наприклад "images/Kino_novyi.jpg".
+//           Назва файлу без пробілів, а великі й малі літери мають точно
+//           збігатися з назвою файлу (GitHub Pages їх розрізняє).
+// Щоб замінити варіант — зміни text та image; щоб додати — скопіюй рядок.
+// Якщо картинка не завантажиться, замість неї з'явиться емодзі етапу.
+// Після правок на телефоні, де вже була репетиція, відкрий сайт з ?reset=1.
+
 const DATE_OPTIONS = {
   stages: [
     {
       id: 'coffee',
-      question: "Час кави ☕️, обирай де:",
+      question: "Час кави ☕️ Обирай, де саме:",
       icon: "fa-mug-hot",
       emoji: "☕",
       options: [
@@ -45,7 +69,7 @@ const DATE_OPTIONS = {
     },
     {
       id: 'food',
-      question: "Щось я зголоднів, врятуєш мене:",
+      question: "Щось я зголоднів… Врятуєш мене?",
       icon: "fa-utensils",
       emoji: "🍽️",
       options: [
@@ -57,9 +81,11 @@ const DATE_OPTIONS = {
     },
     {
       id: 'movie',
-      question: "Може глянемо фільм?",
+      question: "Може, глянемо фільм?",
       icon: "fa-film",
       emoji: "🎬",
+      // TODO(власник): ці три фільми ЗАСТАРІЛІ — це заглушки!
+      // Заміни назви й картинки на те, що зараз справді йде в кіно.
       options: [
         { text: "Грішники", image: "images/Kino_grishniki.jpeg" },
         { text: "Громовержці", image: "images/Kino_gromovergi.jpg" },
@@ -68,14 +94,14 @@ const DATE_OPTIONS = {
     },
     {
       id: 'gift',
-      question: "За твоє 'терпіння' — міні подарунок!",
+      question: "За твоє «терпіння» — міні-подарунок!",
       icon: "fa-gift",
       emoji: "🎁",
       options: [
         { text: "Квіти", image: "images/Podarik_kviti.jpg" },
         { text: "Рафаелки", image: "images/Podarik_rafaelo.jpeg" },
         { text: "Брелок", image: "images/Podarik_brelok.jpg" },
-        { text: "Міні іграшка", image: "images/Podarik_snish.jpeg" }
+        { text: "Міні-іграшка", image: "images/Podarik_snish.jpeg" }
       ]
     }
   ]
@@ -120,6 +146,22 @@ class Utils {
     });
   }
 
+  // Never rejects: resolves true when the image loaded, false otherwise.
+  static loadImage(src) {
+    return Utils.preloadImage(src).then(() => true, () => false);
+  }
+
+  static wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  static localDateString(date = new Date()) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
   static randomItem(array) {
     return array[Math.floor(Math.random() * array.length)];
   }
@@ -137,12 +179,41 @@ class SoundManager {
   constructor() {
     this.enabled = localStorage.getItem(CONFIG.SOUNDS_ENABLED_KEY) !== 'false';
     this.audioContext = null;
+    this.AudioCtor = null;
   }
 
+  // Browsers (iOS Safari especially) only allow audio to start inside a user
+  // gesture, so the AudioContext is created/resumed on the first tap or key
+  // press instead of on page load. The listeners stay: iOS can suspend the
+  // context again (e.g. after the phone was locked) and the next tap revives it.
   init() {
-    if (typeof AudioContext !== 'undefined' || typeof webkitAudioContext !== 'undefined') {
-      this.audioContext = new (AudioContext || webkitAudioContext)();
+    this.AudioCtor = window.AudioContext || window.webkitAudioContext || null;
+    if (!this.AudioCtor) return;
+
+    const unlock = () => this.unlock();
+    ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown'].forEach(type => {
+      document.addEventListener(type, unlock, { capture: true, passive: true });
+    });
+  }
+
+  unlock() {
+    if (!this.AudioCtor) return;
+    try {
+      if (!this.audioContext) {
+        this.audioContext = new this.AudioCtor();
+      }
+      if (this.audioContext.state !== 'running') {
+        const resumed = this.audioContext.resume();
+        if (resumed && typeof resumed.catch === 'function') resumed.catch(() => {});
+      }
+    } catch (e) {
+      console.warn('Audio is not available:', e);
+      this.AudioCtor = null;
     }
+  }
+
+  isReady() {
+    return Boolean(this.audioContext) && this.audioContext.state === 'running';
   }
 
   toggle() {
@@ -152,31 +223,31 @@ class SoundManager {
   }
 
   playClick() {
-    if (!this.enabled || !this.audioContext) return;
+    if (!this.enabled || !this.isReady()) return;
     this.playTone(800, 0.05, 'sine');
   }
 
   playSuccess() {
-    if (!this.enabled || !this.audioContext) return;
+    if (!this.enabled || !this.isReady()) return;
     this.playTone(523, 0.1, 'sine');
     setTimeout(() => this.playTone(659, 0.1, 'sine'), 100);
     setTimeout(() => this.playTone(784, 0.15, 'sine'), 200);
   }
 
   playSpin() {
-    if (!this.enabled || !this.audioContext) return;
+    if (!this.enabled || !this.isReady()) return;
     this.playTone(400 + Math.random() * 200, 0.03, 'square');
   }
 
   playUnlock() {
-    if (!this.enabled || !this.audioContext) return;
+    if (!this.enabled || !this.isReady()) return;
     this.playTone(440, 0.1, 'sine');
     setTimeout(() => this.playTone(554, 0.1, 'sine'), 150);
     setTimeout(() => this.playTone(659, 0.2, 'sine'), 300);
   }
 
   playMystic() {
-    if (!this.enabled || !this.audioContext) return;
+    if (!this.enabled || !this.isReady()) return;
 
     try {
       const ctx = this.audioContext;
@@ -199,7 +270,7 @@ class SoundManager {
   }
 
   playTone(frequency, duration, type = 'sine') {
-    if (!this.audioContext) return;
+    if (!this.isReady()) return;
     
     try {
       const oscillator = this.audioContext.createOscillator();
@@ -490,7 +561,7 @@ class ParticlesEffect {
   }
 
   createParticles(count) {
-    const symbols = ['✨', '💫', '⭐', '🌟', '💖', '🎀', '🌸'];
+    const symbols = ['✨', '💫', '⭐', '🌟', '🎈', '🎀', '🌸'];
 
     for (let i = 0; i < count; i++) {
       const particle = document.createElement('span');
@@ -566,76 +637,64 @@ class TransitionManager {
 // CONVERSATION TOPICS DATA
 // ============================================
 
+// Питання сформульовані нейтрально щодо статі, щоб їх міг читати вголос
+// будь-хто з двох.
 const CONVERSATION_TOPICS = {
   fun: [
-    "Яке твоє найдивніше хобі або захоплення?",
-    "Якби ти міг телепортуватись в будь-яку точку світу прямо зараз, куди б поїхав?",
-    "Яка твоя суперсила в ідеальному світі?",
-    "Якби ти міг мати будь-яку тварину як домашню, навіть екзотичну, яку б обрав?",
-    "Яка найсмішніша ситуація траплялась з тобою в громадському місці?",
-    "Якби ти міг стати експертом в чомусь за одну ніч, що б це було?",
+    "Яке твоє найдивніше хобі чи захоплення?",
+    "Куди б тобі хотілося телепортуватися прямо зараз?",
+    "Яка суперсила пасувала б тобі найбільше?",
+    "Яку тварину, навіть найекзотичнішу, тобі хотілося б мати вдома?",
+    "Яка найсмішніша ситуація траплялася з тобою на людях?",
+    "У чому тобі хотілося б стати експертом за одну ніч?",
     "Яка пісня завжди піднімає тобі настрій?",
-    "Якби ти міг змінити одну річ у своєму житті без наслідків, що б це було?",
-    "Який твій найбільш embarrassing момент з дитинства?",
-    "Якби ти міг створити свій власний святковий день, що б це було?",
-    "Яке твоє найнезвичайніше кулінарне поєднання, яке тобі подобається?",
-    "Якби ти міг мати обід з будь-якою людиною (живою чи мертвою), хто б це був?"
+    "Якби можна було змінити одну річ у житті без жодних наслідків, що б це було?",
+    "Яка історія з дитинства досі змушує тебе червоніти?",
+    "Якби можна було вигадати власне свято, яким би воно було?",
+    "Яке найдивніше поєднання продуктів тобі смакує?",
+    "З ким із відомих людей — сучасних чи історичних — тобі хотілося б пообідати?"
   ],
   deep: [
-    "Який найкращий спогад з дитинства?",
-    "Що тебе найбільше мотивує у житті?",
+    "Який твій найкращий спогад з дитинства?",
+    "Що тебе найбільше мотивує в житті?",
     "Яка твоя найбільша мрія?",
-    "Що б ти змінив у собі, якби міг?",
-    "Яка найважливіша цінність для тебе?",
-    "Чого ти найбільше боїшся у житті?",
+    "Якби можна було щось змінити в собі, що б це було?",
+    "Яка цінність для тебе найважливіша?",
+    "Чого ти найбільше боїшся?",
     "Який момент змінив твоє життя назавжди?",
-    "Що робить тебе щасливим?",
-    "Яким ти бачиш себе через 5 років?",
-    "Що тебе надихає ставати кращою версією себе?",
-    "Яка твоя найбільша життєва філософія?",
+    "Що робить твій день по-справжньому щасливим?",
+    "Як ти уявляєш своє життя через п'ять років?",
+    "Що надихає тебе ставати кращою версією себе?",
+    "Яке в тебе життєве кредо?",
     "Що для тебе означає успіх?"
   ],
-  romantic: [
-    "Яке твоє ідеальне побачення?",
-    "Що для тебе найважливіше у стосунках?",
-    "Який твій love language (мова кохання)?",
-    "Яка найромантичніша річ, яку хтось зробив для тебе?",
-    "Вірив/вірила ти в кохання з першого погляду?",
-    "Яке місце ти б хотів/хотіла відвідати разом з коханою людиною?",
-    "Що робить момент особливим для тебе?",
-    "Яка пісня нагадує тобі про кохання?",
-    "Який найкращий комплімент ти отримував/отримувала?",
-    "Як ти розумієш, що закохався/закохалась?",
-    "Що для тебе означає бути коханим/коханою?",
-    "Яке твоє найтепліше спогад про стосунки?"
-  ],
   unusual: [
-    "Якби ти міг говорити з тваринами, яких би ти обрав?",
-    "В якій історичній епосі ти б хотів/хотіла пожити?",
-    "Якби ти писав автобіографію, яка була б її назва?",
-    "Який незвичайний талант у тебе є?",
-    "Якби ти міг змінити одне правило у світі, що б це було?",
+    "Якби можна було говорити з тваринами, з ким би тобі найбільше хотілося поспілкуватися?",
+    "У якій історичній епосі тобі хотілося б пожити?",
+    "Як би називалася твоя автобіографія?",
+    "Який у тебе є незвичайний талант?",
+    "Якби можна було змінити одне правило у світі, що б це було?",
     "Яка найдивніша річ у твоєму списку бажань?",
-    "Якби ти міг мати розмову зі своїм майбутнім 'я', що б запитав?",
-    "Який альтернативний шлях кар'єри тебе приваблює?",
-    "Якби ти міг створити нову традицію, яка б це була?",
-    "Що найнезвичайнішого ти вивчив/вивчила останнім часом?",
-    "Якби твоє життя було фільмом, який жанр це був би?",
-    "Який найбільш випадковий факт про тебе?",
-    "Якби ти міг мати магічну здібність на один день, яку б обрав?"
+    "Що б тобі хотілося запитати у свого майбутнього «я»?",
+    "Ким тобі було б цікаво попрацювати хоча б тиждень?",
+    "Яку нову традицію тобі хотілося б запровадити?",
+    "Який найнезвичніший факт запам'ятався тобі останнім часом?",
+    "Якби твоє життя було фільмом, то якого жанру?",
+    "Який найнесподіваніший факт про тебе?",
+    "Яку магічну здібність тобі хотілося б мати хоча б на один день?"
   ],
   icebreakers: [
-    "Що найкраще сталося сьогодні?",
+    "Що найкраще сталося з тобою сьогодні?",
     "Яка твоя улюблена пора року і чому?",
     "Який фільм ти можеш переглядати безліч разів?",
     "Який твій улюблений спосіб провести вихідні?",
-    "Кава чи чай? І як саме ти любиш?",
-    "Яка твоя comfort food (їжа для комфорту)?",
+    "Кава чи чай? І як саме ти їх любиш?",
+    "Яка страва для тебе — найкращі ліки від поганого настрою?",
     "Який подарунок тебе найбільше здивував?",
     "Куди ти любиш подорожувати?",
     "Яка книга справила на тебе найбільше враження?",
-    "Який твій улюблений ресторан чи кафе?",
-    "Що тобі подобається робити для релаксу?",
+    "Яке твоє улюблене місце, щоб смачно поїсти?",
+    "Як ти любиш відпочивати після важкого дня?",
     "Який твій улюблений вид мистецтва?"
   ]
 };
@@ -649,8 +708,26 @@ class ConversationTopics {
     this.element = null;
     this.currentCategory = 'fun';
     this.currentTopicIndex = 0;
-    this.favorites = JSON.parse(localStorage.getItem('favoriteTopics') || '[]');
+    this.favorites = this.loadFavorites();
     this.usedTopics = new Set();
+  }
+
+  // Favourites are stored as "category-index" keys; drop any that no longer
+  // point at an existing topic (e.g. the removed category) or are corrupted.
+  loadFavorites() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(CONFIG.FAVORITES_KEY) || '[]');
+      return Array.isArray(raw) ? raw.filter(key => this.getTopicByKey(key) !== null) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  getTopicByKey(key) {
+    if (typeof key !== 'string') return null;
+    const [category, index] = key.split('-');
+    const topics = CONVERSATION_TOPICS[category];
+    return topics?.[Number(index)] ?? null;
   }
 
   render() {
@@ -666,7 +743,7 @@ class ConversationTopics {
     panel.innerHTML = `
       <div class="topics-header">
         <h3 class="topics-title">💬 Ідеї для розмови</h3>
-        <p class="topics-subtitle">Якщо не знаєш про що поговорити...</p>
+        <p class="topics-subtitle">Якщо раптом не знаєте, про що поговорити…</p>
       </div>
 
       <div class="topics-categories">
@@ -676,14 +753,11 @@ class ConversationTopics {
         <button class="topic-category-btn" data-category="deep">
           💭 Глибокі
         </button>
-        <button class="topic-category-btn" data-category="romantic">
-          💕 Романтичні
-        </button>
         <button class="topic-category-btn" data-category="unusual">
           🎲 Незвичайні
         </button>
         <button class="topic-category-btn" data-category="icebreakers">
-          🧊 Початок
+          🧊 Для початку
         </button>
       </div>
 
@@ -704,7 +778,7 @@ class ConversationTopics {
           <span>Наступна тема</span>
         </button>
         <button class="btn btn-secondary topic-favorites-btn">
-          <i class="fas fa-heart"></i>
+          <i class="fas fa-star"></i>
           <span>Улюблені (<span class="favorites-count">0</span>)</span>
         </button>
       </div>
@@ -767,19 +841,20 @@ class ConversationTopics {
   }
 
   showRandomTopic() {
-    const topics = CONVERSATION_TOPICS[this.currentCategory];
-    const availableTopics = topics.filter((_, index) =>
-      !this.usedTopics.has(`${this.currentCategory}-${index}`)
+    const category = this.currentCategory;
+    const topics = CONVERSATION_TOPICS[category];
+    const allIndexes = topics.map((_, index) => index);
+    let availableIndexes = allIndexes.filter(index =>
+      !this.usedTopics.has(`${category}-${index}`)
     );
 
-    // Якщо всі теми використані, скидаємо
-    if (availableTopics.length === 0) {
-      this.usedTopics.clear();
-      this.showRandomTopic();
-      return;
+    // Якщо всі теми категорії вже були, починаємо коло спочатку
+    if (availableIndexes.length === 0) {
+      allIndexes.forEach(index => this.usedTopics.delete(`${category}-${index}`));
+      availableIndexes = allIndexes;
     }
 
-    const randomIndex = Math.floor(Math.random() * topics.length);
+    const randomIndex = Utils.randomItem(availableIndexes);
     const topic = topics[randomIndex];
 
     this.usedTopics.add(`${this.currentCategory}-${randomIndex}`);
@@ -814,7 +889,7 @@ class ConversationTopics {
       Utils.vibrate([50, 30, 50]);
     }
 
-    localStorage.setItem('favoriteTopics', JSON.stringify(this.favorites));
+    localStorage.setItem(CONFIG.FAVORITES_KEY, JSON.stringify(this.favorites));
     this.updateFavoriteButton();
     this.updateFavoritesCount();
   }
@@ -840,14 +915,15 @@ class ConversationTopics {
 
   showFavorites() {
     if (this.favorites.length === 0) {
-      Toast.show('У вас ще немає улюблених тем', 'info');
+      Toast.show('Улюблених тем поки немає — тисни ⭐ біля питання', 'info');
       return;
     }
 
     // Показати модальне вікно з улюбленими темами
     const favoritesHtml = this.favorites.map(key => {
-      const [category, index] = key.split('-');
-      const topic = CONVERSATION_TOPICS[category][parseInt(index)];
+      const [category] = key.split('-');
+      const topic = this.getTopicByKey(key);
+      if (topic === null) return '';
       return `<div class="favorite-item">
         <span class="favorite-emoji">${this.getCategoryEmoji(category)}</span>
         <p>${topic}</p>
@@ -859,7 +935,7 @@ class ConversationTopics {
     modal.innerHTML = `
       <div class="topics-modal-content glass-card">
         <button class="topics-modal-close">&times;</button>
-        <h3>💖 Ваші улюблені теми</h3>
+        <h3>⭐ Улюблені теми</h3>
         <div class="favorites-list">${favoritesHtml}</div>
       </div>
     `;
@@ -884,7 +960,6 @@ class ConversationTopics {
     const emojis = {
       fun: '😄',
       deep: '💭',
-      romantic: '💕',
       unusual: '🎲',
       icebreakers: '🧊'
     };
@@ -961,12 +1036,15 @@ class StateManager {
       stages: DATE_OPTIONS.stages.map((_, index) => ({
         selectedIndex: null,
         confirmed: false,
-        unlockTime: index === 0 ? 0 : null
+        unlockTime: index === 0 ? 0 : null,
+        rerollsUsed: 0
       })),
       lastActiveStage: 0,
       pendingStage: null,
       pendingUnlockTime: null,
-      farewellReached: false
+      farewellReached: false,
+      finishedAt: null,
+      rating: null
     };
   }
 
@@ -978,28 +1056,66 @@ class StateManager {
 
   load() {
     try {
-      const saved = localStorage.getItem(CONFIG.STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        
-        // Validate state
-        if (parsed.userId !== this.state.userId) {
-          console.log('User ID mismatch, resetting state');
-          return this.reset();
-        }
-        
-        if (!parsed.stages || parsed.stages.length !== DATE_OPTIONS.stages.length) {
-          console.log('Stage count mismatch, resetting state');
-          return this.reset();
-        }
+      // States from older versions are not reused.
+      CONFIG.LEGACY_STORAGE_KEYS.forEach(key => localStorage.removeItem(key));
 
-        this.state = { ...this.getDefaultState(), ...parsed };
-        console.log('State loaded:', this.state);
+      const saved = localStorage.getItem(CONFIG.STORAGE_KEY);
+      if (!saved) return;
+
+      const normalized = this.normalize(JSON.parse(saved));
+      if (!normalized) {
+        console.warn('Saved state does not match the current content, starting over');
+        this.reset();
+        return;
       }
+      this.state = normalized;
     } catch (e) {
       console.error('Error loading state:', e);
       this.reset();
     }
+  }
+
+  // Validates a saved state against the current DATE_OPTIONS so that edited
+  // content (fewer options, different stage count) can never crash the app.
+  normalize(parsed) {
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (parsed.userId !== this.state.userId) return null;
+
+    const stageDefs = DATE_OPTIONS.stages;
+    if (!Array.isArray(parsed.stages) || parsed.stages.length !== stageDefs.length) return null;
+
+    const defaults = this.getDefaultState();
+    const stages = parsed.stages.map((saved, index) => {
+      const s = saved && typeof saved === 'object' ? saved : {};
+      const optionCount = stageDefs[index].options.length;
+      const selectedIndex = Number.isInteger(s.selectedIndex) &&
+        s.selectedIndex >= 0 && s.selectedIndex < optionCount ? s.selectedIndex : null;
+      return {
+        selectedIndex,
+        confirmed: Boolean(s.confirmed) && selectedIndex !== null,
+        unlockTime: typeof s.unlockTime === 'number' ? s.unlockTime : defaults.stages[index].unlockTime,
+        rerollsUsed: Number.isInteger(s.rerollsUsed) && s.rerollsUsed > 0 ? s.rerollsUsed : 0
+      };
+    });
+
+    const pendingStage = parsed.pendingStage === 'farewell' ||
+      (Number.isInteger(parsed.pendingStage) && parsed.pendingStage > 0 && parsed.pendingStage < stages.length)
+      ? parsed.pendingStage : null;
+    const pendingUnlockTime = pendingStage !== null && typeof parsed.pendingUnlockTime === 'number'
+      ? parsed.pendingUnlockTime : null;
+
+    return {
+      ...defaults,
+      currentStep: typeof parsed.currentStep === 'string' ? parsed.currentStep : defaults.currentStep,
+      introCompleted: Boolean(parsed.introCompleted),
+      stages,
+      lastActiveStage: Number.isInteger(parsed.lastActiveStage) ? parsed.lastActiveStage : 0,
+      pendingStage: pendingUnlockTime === null ? null : pendingStage,
+      pendingUnlockTime,
+      farewellReached: Boolean(parsed.farewellReached),
+      finishedAt: typeof parsed.finishedAt === 'number' ? parsed.finishedAt : null,
+      rating: typeof parsed.rating === 'string' ? parsed.rating : null
+    };
   }
 
   save() {
@@ -1048,6 +1164,11 @@ class StateManager {
     return this.state.stages[index]?.confirmed ?? false;
   }
 
+  getRerollsLeft(index) {
+    const used = this.state.stages[index]?.rerollsUsed ?? 0;
+    return Math.max(0, CONFIG.MAX_REROLLS - used);
+  }
+
   isStageUnlocked(index) {
     const stage = this.state.stages[index];
     if (!stage) return false;
@@ -1093,11 +1214,17 @@ class ProgressBar {
           <span class="step-number">${i + 1}</span>
           <i class="fas fa-check step-check"></i>
         </div>
-        <span class="step-label">${DATE_OPTIONS.stages[i].emoji}</span>
+        <span class="step-label">🔒</span>
       `;
       this.container.appendChild(step);
       this.steps.push(step);
     }
+  }
+
+  // Locked stages stay a secret: the stage emoji is shown only once unlocked.
+  revealStep(index) {
+    const label = this.steps[index]?.querySelector('.step-label');
+    if (label) label.textContent = DATE_OPTIONS.stages[index].emoji;
   }
 
   updateStep(index, completed) {
@@ -1124,36 +1251,56 @@ class Timer {
   constructor(element, conversationTopics = null) {
     this.element = element;
     this.textElement = element.querySelector('.timer-text');
+    this.labelElement = element.querySelector('.timer-label');
     this.intervalId = null;
     this.unlockTime = null;
     this.onComplete = null;
     this.conversationTopics = conversationTopics;
   }
 
-  start(unlockTime, onComplete) {
+  start(unlockTime, onComplete, label = '') {
     this.stop();
     this.unlockTime = unlockTime;
     this.onComplete = onComplete;
+    if (this.labelElement) this.labelElement.textContent = label;
 
     this.element.classList.add('active');
-    this.update();
-
-    this.intervalId = setInterval(() => this.update(), 1000);
 
     // Show conversation topics when timer starts
     if (this.conversationTopics) {
       this.conversationTopics.show();
     }
+
+    this.intervalId = setInterval(() => this.update(), 1000);
+    this.update();
+  }
+
+  isRunning() {
+    return this.intervalId !== null;
+  }
+
+  // Re-check right away (e.g. when the tab becomes visible again).
+  refresh() {
+    if (this.isRunning()) this.update();
+  }
+
+  // Ends the wait now, through the same completion path as natural expiry.
+  finishNow() {
+    if (!this.isRunning()) return;
+    this.complete();
+  }
+
+  complete() {
+    const onComplete = this.onComplete;
+    this.stop();
+    if (onComplete) onComplete();
   }
 
   update() {
     const remaining = this.unlockTime - Date.now();
-    
+
     if (remaining <= 0) {
-      this.stop();
-      if (this.onComplete) {
-        this.onComplete();
-      }
+      this.complete();
       return;
     }
 
@@ -1165,6 +1312,7 @@ class Timer {
       clearInterval(this.intervalId);
       this.intervalId = null;
     }
+    this.onComplete = null;
     this.element.classList.remove('active');
 
     // Hide conversation topics when timer stops
@@ -1570,11 +1718,23 @@ class StageComponent {
 // ============================================
 
 class MysticStageComponent extends StageComponent {
+  constructor(stageData, index, options = {}) {
+    super(stageData, index, options);
+    this.selectedIndex = null;
+    this.isConfirmed = false;
+    this.revealed = false;
+    this.els = {};
+  }
+
+  // A locked stage is a secret: its question, icon and emoji are NOT put into
+  // the DOM until reveal() runs on unlock. Only a lock and a teaser are shown.
   render() {
     const stage = document.createElement('section');
     stage.className = 'stage-card mystic-tarot-card glass-card locked';
     stage.dataset.index = this.index;
     stage.id = `stage-${this.index}`;
+
+    const stageNumber = this.index + 1;
 
     stage.innerHTML = `
       <div class="card-glow"></div>
@@ -1585,9 +1745,9 @@ class MysticStageComponent extends StageComponent {
 
       <header class="stage-header mystic-header">
         <div class="stage-icon mystic-icon">
-          <i class="fas ${this.data.icon}"></i>
+          <i class="fas fa-lock"></i>
         </div>
-        <h2 class="stage-title mystic-title">${this.data.question}</h2>
+        <h2 class="stage-title mystic-title">Етап ${stageNumber}</h2>
       </header>
 
       <div class="stage-content mystic-content">
@@ -1599,7 +1759,8 @@ class MysticStageComponent extends StageComponent {
                   <div class="card-back-pattern">🔮</div>
                 </div>
                 <div class="mystic-card-back">
-                  <img class="option-image mystic-image" src="" alt="Обрана опція">
+                  <img class="option-image mystic-image" alt="">
+                  <div class="image-placeholder" aria-hidden="true"></div>
                   <div class="image-mystic-frame"></div>
                 </div>
               </div>
@@ -1624,17 +1785,35 @@ class MysticStageComponent extends StageComponent {
               <i class="fas fa-redo"></i>
               <span>Інший варіант</span>
             </button>
+            <p class="reroll-note"></p>
           </div>
         </div>
       </div>
 
       <div class="stage-lock-overlay">
         <i class="fas fa-lock"></i>
-        <p>Очікування...</p>
+        <p class="lock-title">Етап ${stageNumber}</p>
+        <p class="lock-teaser">Поки що це секрет 🤫</p>
       </div>
     `;
 
     this.element = stage;
+    const q = (selector) => stage.querySelector(selector);
+    this.els = {
+      display: q('.option-display'),
+      cardWrapper: q('.mystic-card-wrapper'),
+      cardBack: q('.mystic-card-back'),
+      img: q('.option-image'),
+      placeholder: q('.image-placeholder'),
+      name: q('.option-name'),
+      title: q('.stage-title'),
+      icon: q('.stage-icon i'),
+      spinBtn: q('.btn-spin'),
+      confirmActions: q('.confirm-actions'),
+      confirmBtn: q('.btn-confirm'),
+      retryBtn: q('.btn-retry'),
+      rerollNote: q('.reroll-note')
+    };
     this.bindEvents();
     return stage;
   }
@@ -1651,29 +1830,64 @@ class MysticStageComponent extends StageComponent {
   }
 
   bindEvents() {
-    const spinBtn = this.element.querySelector('.btn-spin');
-    const confirmBtn = this.element.querySelector('.btn-confirm');
-    const retryBtn = this.element.querySelector('.btn-retry');
+    const { img, cardBack, spinBtn, confirmBtn, retryBtn } = this.els;
+
+    // Broken/missing image -> neat placeholder with the stage emoji
+    img.addEventListener('load', () => cardBack.classList.remove('image-failed'));
+    img.addEventListener('error', () => {
+      if (img.getAttribute('src')) cardBack.classList.add('image-failed');
+    });
 
     spinBtn.addEventListener('click', () => this.spin());
     confirmBtn.addEventListener('click', () => this.confirm());
-    retryBtn.addEventListener('click', () => this.retry());
+    retryBtn.addEventListener('click', () => this.reroll());
   }
 
-  async spin() {
-    if (this.isSpinning) return;
+  getRerollsLeft() {
+    return this.options.getRerollsLeft ? this.options.getRerollsLeft(this.index) : 0;
+  }
+
+  pickIndex(excludeIndex = null) {
+    const all = this.data.options.map((_, i) => i);
+    const pool = excludeIndex !== null && all.length > 1
+      ? all.filter(i => i !== excludeIndex)
+      : all;
+    return Utils.randomItem(pool);
+  }
+
+  showOption(index) {
+    const opt = this.data.options[index];
+    const { img, cardBack, name } = this.els;
+    cardBack.classList.remove('image-failed');
+    img.alt = opt.text;
+    img.src = opt.image;
+    name.textContent = opt.text;
+  }
+
+  async spin({ excludeIndex = null, isReroll = false } = {}) {
+    if (this.isSpinning || this.isConfirmed || this.isLocked()) return;
     this.isSpinning = true;
 
     const { onSpin, soundManager } = this.options;
-    const display = this.element.querySelector('.option-display');
-    const cardWrapper = this.element.querySelector('.mystic-card-wrapper');
-    const img = this.element.querySelector('.option-image');
-    const name = this.element.querySelector('.option-name');
-    const confirmActions = this.element.querySelector('.confirm-actions');
-    const spinBtn = this.element.querySelector('.btn-spin');
+    const { display, cardWrapper, cardBack, img, name } = this.els;
 
-    spinBtn.disabled = true;
-    confirmActions.classList.remove('visible');
+    // Result is decided (and saved) up front, so a reload mid-spin
+    // cannot hand out a free extra spin.
+    const selectedIndex = this.pickIndex(excludeIndex);
+    const selected = this.data.options[selectedIndex];
+    this.selectedIndex = selectedIndex;
+    if (onSpin) onSpin(this.index, selectedIndex, isReroll);
+
+    // Start loading the picture now; the card flips only once it is ready.
+    const imageReady = Utils.loadImage(selected.image);
+
+    this.updateActions();
+
+    // Hide the previous picture while the card turns face down again
+    cardBack.classList.add('is-loading');
+    cardWrapper.classList.remove('flipped');
+    cardWrapper.style.transform = '';
+    name.textContent = '';
 
     // Містичний ефект та звук
     this.element.classList.add('mystic-spinning');
@@ -1681,17 +1895,6 @@ class MysticStageComponent extends StageComponent {
 
     Utils.vibrate([50, 30, 50]);
 
-    const options = this.data.options;
-
-    // Спочатку вибираємо випадковий результат
-    const selectedIndex = Math.floor(Math.random() * options.length);
-    const selected = options[selectedIndex];
-
-    // Встановлюємо картинку до початку анімації
-    img.src = selected.image;
-    name.textContent = selected.text;
-
-    // Показуємо display
     display.classList.add('visible');
 
     // Короткий spin ефект з обертанням
@@ -1712,31 +1915,79 @@ class MysticStageComponent extends StageComponent {
       }, 50); // Швидше обертання
     });
 
+    // Чекаємо картинку (з обмеженням), щоб не показати її напівзавантаженою
+    await Promise.race([imageReady, Utils.wait(CONFIG.IMAGE_WAIT_MS)]);
+    this.showOption(selectedIndex);
+    if (typeof img.decode === 'function') {
+      await Promise.race([img.decode().catch(() => {}), Utils.wait(600)]);
+    }
+    cardBack.classList.remove('is-loading');
+
     // Фінальний flip щоб показати картинку
     cardWrapper.style.transform = '';
     cardWrapper.classList.add('flipped');
 
     this.element.classList.remove('mystic-spinning');
-    confirmActions.classList.add('visible');
-    spinBtn.disabled = false;
     this.isSpinning = false;
+    this.updateActions();
 
     soundManager?.playSuccess();
     // Сильна вібрація при показі результату
     Utils.vibrate([200, 100, 200]);
+  }
 
-    if (onSpin) {
-      onSpin(this.index, selectedIndex);
+  // "Інший варіант": limited by CONFIG.MAX_REROLLS, never returns the option
+  // that was just rejected, and spins right away.
+  reroll() {
+    if (this.isSpinning || this.isConfirmed || this.selectedIndex === null) return;
+    if (this.getRerollsLeft() <= 0) {
+      this.updateActions();
+      return;
     }
+    this.spin({ excludeIndex: this.selectedIndex, isReroll: true });
+  }
+
+  updateActions() {
+    const { spinBtn, confirmActions, retryBtn, rerollNote } = this.els;
+
+    if (this.isConfirmed) {
+      spinBtn.classList.add('hidden');
+      confirmActions.classList.remove('visible');
+      return;
+    }
+
+    if (this.isSpinning) {
+      spinBtn.classList.add('hidden');
+      confirmActions.classList.remove('visible');
+      return;
+    }
+
+    if (this.selectedIndex === null) {
+      spinBtn.classList.remove('hidden');
+      spinBtn.disabled = false;
+      confirmActions.classList.remove('visible');
+      return;
+    }
+
+    const left = this.getRerollsLeft();
+    spinBtn.classList.add('hidden');
+    retryBtn.classList.toggle('hidden', left <= 0);
+    if (left <= 0) {
+      rerollNote.textContent = '🔮 Доля сказала своє слово!';
+    } else if (left === 1) {
+      rerollNote.textContent = 'Передумати можна лише раз 😉';
+    } else {
+      rerollNote.textContent = `Передумати можна ще ${left} ${left >= 5 ? 'разів' : 'рази'} 😉`;
+    }
+    confirmActions.classList.add('visible');
   }
 
   confirm() {
+    if (this.isConfirmed || this.isSpinning || this.selectedIndex === null) return;
     const { onConfirm, soundManager } = this.options;
-    const confirmActions = this.element.querySelector('.confirm-actions');
-    const spinBtn = this.element.querySelector('.btn-spin');
 
-    confirmActions.classList.remove('visible');
-    spinBtn.classList.add('hidden');
+    this.isConfirmed = true;
+    this.updateActions();
     this.element.classList.add('confirmed');
 
     soundManager?.playSuccess();
@@ -1758,27 +2009,29 @@ class MysticStageComponent extends StageComponent {
   }
 
   retry() {
-    const { onRetry } = this.options;
-    const display = this.element.querySelector('.option-display');
-    const cardWrapper = this.element.querySelector('.mystic-card-wrapper');
-    const confirmActions = this.element.querySelector('.confirm-actions');
-    const spinBtn = this.element.querySelector('.btn-spin');
-
-    cardWrapper.classList.remove('flipped');
-    cardWrapper.style.transform = '';
-    display.classList.remove('visible');
-    confirmActions.classList.remove('visible');
-    spinBtn.disabled = false;
-
-    if (onRetry) {
-      onRetry(this.index);
-    }
+    this.reroll();
   }
 
-  unlock() {
+  // Puts the real question/icon/emoji into the card (only on unlock).
+  reveal() {
+    if (this.revealed) return;
+    this.revealed = true;
+    this.els.icon.className = `fas ${this.data.icon}`;
+    this.els.title.textContent = this.data.question;
+    this.els.placeholder.textContent = this.data.emoji;
+  }
+
+  isLocked() {
+    return this.element?.classList.contains('locked') ?? true;
+  }
+
+  unlock({ silent = false } = {}) {
+    this.reveal();
+    if (!this.isLocked()) return;
     this.element.classList.remove('locked');
     this.element.classList.add('unlocked');
-    this.options.soundManager?.playUnlock();
+    this.updateActions();
+    if (!silent) this.options.soundManager?.playUnlock();
   }
 
   lock() {
@@ -1786,25 +2039,25 @@ class MysticStageComponent extends StageComponent {
     this.element.classList.remove('unlocked');
   }
 
+  // Restores a saved (possibly unconfirmed) selection after a reload.
   setSelected(selectedIndex) {
-    if (selectedIndex === null) return;
+    if (selectedIndex === null || selectedIndex === undefined) {
+      this.updateActions();
+      return;
+    }
 
-    const opt = this.data.options[selectedIndex];
-    const display = this.element.querySelector('.option-display');
-    const cardWrapper = this.element.querySelector('.mystic-card-wrapper');
-    const img = this.element.querySelector('.option-image');
-    const name = this.element.querySelector('.option-name');
-
-    img.src = opt.image;
-    name.textContent = opt.text;
-    display.classList.add('visible');
-    cardWrapper.classList.add('flipped');
+    this.selectedIndex = selectedIndex;
+    this.showOption(selectedIndex);
+    this.els.cardBack.classList.remove('is-loading');
+    this.els.display.classList.add('visible');
+    this.els.cardWrapper.classList.add('flipped');
+    this.updateActions();
   }
 
   setConfirmed() {
-    const spinBtn = this.element.querySelector('.btn-spin');
-    spinBtn.classList.add('hidden');
+    this.isConfirmed = true;
     this.element.classList.add('confirmed');
+    this.updateActions();
   }
 }
 
@@ -1818,7 +2071,7 @@ class RoadmapGenerator {
     this.stateManager = stateManager;
   }
 
-  async generate(container) {
+  async generate(container, date = new Date()) {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
 
@@ -1826,21 +2079,29 @@ class RoadmapGenerator {
       this.stateManager.isStageConfirmed(i)
     );
 
-    console.log('Confirmed stages:', confirmedStages.length);
-
     if (confirmedStages.length === 0) {
       console.warn('No confirmed stages to display!');
-      return;
+      return null;
+    }
+
+    // Make sure the web fonts are used on the canvas when available
+    try {
+      if (document.fonts?.ready) {
+        await Promise.race([document.fonts.ready, Utils.wait(1500)]);
+      }
+    } catch (e) {
+      // fonts are optional
     }
 
     const width = 500; // Зменшено з 600
     const stageHeight = 110; // Зменшено з 140 для компактності
     const height = confirmedStages.length * stageHeight + 100; // Менший відступ
 
-    console.log('Canvas dimensions:', width, 'x', height);
-
-    canvas.width = width;
-    canvas.height = height;
+    // Draw at 2x so the saved picture stays sharp on a phone screen
+    const scale = 2;
+    canvas.width = width * scale;
+    canvas.height = height * scale;
+    ctx.scale(scale, scale);
 
     // Background gradient
     const gradient = ctx.createLinearGradient(0, 0, 0, height);
@@ -1867,10 +2128,9 @@ class RoadmapGenerator {
     ctx.fillText('✨ Цього дня ✨', width / 2, 35); // Менший відступ
 
     // Date
-    const today = new Date();
     ctx.font = '13px "Montserrat", sans-serif'; // Зменшено з 16px
     ctx.fillStyle = '#666';
-    ctx.fillText(today.toLocaleDateString('uk-UA', { 
+    ctx.fillText(date.toLocaleDateString('uk-UA', {
       weekday: 'long', 
       year: 'numeric', 
       month: 'long', 
@@ -1972,7 +2232,8 @@ class RoadmapGenerator {
       ctx.font = '16px serif'; // Зменшено з 20px
       ctx.fillStyle = '#2d1b3e';
       ctx.textAlign = 'center';
-      ctx.fillText(stage.emoji, pathX, y + 5);
+      ctx.textBaseline = 'middle';
+      ctx.fillText(stage.emoji, pathX, y + 1);
 
       // Text box
       const text = option.text;
@@ -2015,64 +2276,105 @@ class RoadmapGenerator {
     // Footer
     ctx.font = 'italic 12px "Montserrat", sans-serif'; // Зменшено
     ctx.fillStyle = '#888';
-    ctx.fillText('💖 Дякую за чудовий день! 💖', width / 2, height - 15);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🎉 Дякую за чудовий день! 🎉', width / 2, height - 15);
 
     container.innerHTML = '';
+    canvas.style.width = `${width}px`;
     canvas.style.maxWidth = '100%';
+    canvas.style.height = 'auto';
     canvas.style.borderRadius = '15px';
+    canvas.setAttribute('role', 'img');
+    canvas.setAttribute('aria-label', 'Карта нашого дня');
     container.appendChild(canvas);
-
-    // Add download button
-    this.addDownloadButton(container, canvas);
 
     return canvas;
   }
 
-  addDownloadButton(container, canvas) {
-    const buttonWrapper = document.createElement('div');
-    buttonWrapper.style.textAlign = 'center';
-    buttonWrapper.style.marginTop = 'var(--space-lg)';
+  // ---- Saving the picture (one implementation for the one button) ----
 
-    const downloadBtn = document.createElement('button');
-    downloadBtn.className = 'btn btn-primary';
-    downloadBtn.innerHTML = `
-      <i class="fas fa-download"></i>
-      <span>Зберегти як картинку</span>
-    `;
-
-    downloadBtn.addEventListener('click', () => {
-      this.downloadRoadmap(canvas);
-    });
-
-    buttonWrapper.appendChild(downloadBtn);
-    container.appendChild(buttonWrapper);
+  fileName(date = new Date()) {
+    return `roadmap-${Utils.localDateString(date)}.png`;
   }
 
-  downloadRoadmap(canvas) {
+  toFile(canvas, date = new Date()) {
+    return new Promise(resolve => {
+      try {
+        canvas.toBlob(blob => {
+          if (!blob) {
+            resolve(null);
+            return;
+          }
+          try {
+            resolve(new File([blob], this.fileName(date), { type: 'image/png' }));
+          } catch (e) {
+            // Very old browsers without the File constructor
+            blob.name = this.fileName(date);
+            resolve(blob);
+          }
+        }, 'image/png');
+      } catch (e) {
+        console.error('Could not export the roadmap:', e);
+        resolve(null);
+      }
+    });
+  }
+
+  canShareFile(file) {
+    if (!file || typeof navigator.share !== 'function' || typeof navigator.canShare !== 'function') {
+      return false;
+    }
     try {
-      // Convert canvas to blob
-      canvas.toBlob((blob) => {
-        // Create download link
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
+      return navigator.canShare({ files: [file] });
+    } catch (e) {
+      return false;
+    }
+  }
 
-        // Generate filename with date
-        const today = new Date();
-        const dateStr = today.toLocaleDateString('uk-UA').replace(/\./g, '-');
-        link.download = `roadmap-${dateStr}.png`;
+  // On phones the share sheet is what actually lets you "Save Image"
+  // (iOS ignores <a download>), so share when sharing files is supported,
+  // otherwise download a PNG. Pass a ready file to keep the share call inside
+  // the tap (browsers require that).
+  async save(canvas, preparedFile = null, date = new Date()) {
+    const file = preparedFile || await this.toFile(canvas, date);
+    if (!file) {
+      Toast.show('Не вдалося зберегти картинку 😔', 'error');
+      return;
+    }
 
-        link.href = url;
-        link.click();
+    if (this.canShareFile(file)) {
+      try {
+        await navigator.share({ files: [file] });
+        Toast.show('Готово! 🎉', 'success');
+        return;
+      } catch (err) {
+        if (err && err.name === 'AbortError') return; // user closed the share sheet
+        console.warn('Share failed, falling back to download:', err);
+      }
+    }
 
-        // Cleanup
-        URL.revokeObjectURL(url);
+    this.downloadFile(file);
+  }
 
-        Toast.show('Roadmap збережено! 🎉', 'success');
-        Utils.vibrate([50, 30, 50]);
-      }, 'image/png', 1.0);
+  downloadFile(file) {
+    try {
+      const url = URL.createObjectURL(file);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = file.name || this.fileName();
+      link.rel = 'noopener';
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+
+      Toast.show('Картинку збережено! 🎉', 'success');
+      Utils.vibrate([50, 30, 50]);
     } catch (error) {
       console.error('Error downloading roadmap:', error);
-      Toast.show('Помилка збереження 😔', 'error');
+      Toast.show('Не вдалося зберегти картинку 😔', 'error');
     }
   }
 
@@ -2088,19 +2390,6 @@ class RoadmapGenerator {
     ctx.lineTo(x, y + radius);
     ctx.quadraticCurveTo(x, y, x + radius, y);
     ctx.closePath();
-  }
-
-  download(canvas) {
-    try {
-      const link = document.createElement('a');
-      link.download = `our-day-${new Date().toISOString().split('T')[0]}.png`;
-      link.href = canvas.toDataURL('image/png');
-      link.click();
-      Toast.show('Роудмеп завантажено!', 'success');
-    } catch (e) {
-      console.error('Download failed:', e);
-      Toast.show('Не вдалося завантажити', 'error');
-    }
   }
 }
 
@@ -2119,25 +2408,25 @@ class DateRandomizerApp {
     this.stageComponents = [];
     this.roadmapGenerator = null;
     this.canvas = null;
+    this.roadmapFile = null;
     this.conversationTopics = null;
+    this.isNavigating = false;
+    this.finalShown = false;
+    this.preloadedImages = [];
   }
 
   async init() {
-    console.log('🚀 Initializing Date Randomizer App...');
-    
     try {
       // Initialize managers
       this.stateManager.load();
       this.soundManager.init();
       this.themeManager.init();
-      console.log('✅ Managers initialized');
 
       // Initialize particles
       const particlesContainer = Utils.$('#particles');
       if (particlesContainer) {
         this.particles = new ParticlesEffect(particlesContainer);
         this.particles.init();
-        console.log('✅ Particles initialized');
       }
 
       // Initialize progress bar
@@ -2145,7 +2434,6 @@ class DateRandomizerApp {
       if (progressBarElement) {
         this.progressBar = new ProgressBar(progressBarElement, DATE_OPTIONS.stages.length);
         this.progressBar.init();
-        console.log('✅ Progress bar initialized');
       }
 
       // Initialize conversation topics first
@@ -2153,14 +2441,13 @@ class DateRandomizerApp {
       if (topicsContainer) {
         this.conversationTopics = new ConversationTopics();
         topicsContainer.appendChild(this.conversationTopics.render());
-        console.log('✅ Conversation topics initialized');
       }
 
       // Initialize timer with conversation topics reference
       const timerElement = Utils.$('#globalTimer');
       if (timerElement) {
         this.timer = new Timer(timerElement, this.conversationTopics);
-        console.log('✅ Timer initialized');
+        this.setupOwnerSkip(timerElement);
       }
 
       // Initialize roadmap generator
@@ -2172,16 +2459,47 @@ class DateRandomizerApp {
       this.setupIntroNavigation();
       this.setupStages();
       this.setupFinalScreen();
-      console.log('✅ UI setup complete');
 
       // Restore state
       this.restoreState();
-      console.log('✅ State restored');
-
-      console.log('🎉 App initialized successfully!');
     } catch (error) {
       console.error('❌ Error during initialization:', error);
     }
+  }
+
+  // Hidden owner shortcut: hold the countdown for ~1.5 s to end the wait now.
+  // Deliberately no visual hint.
+  setupOwnerSkip(timerElement) {
+    let holdTimer = null;
+
+    const cancel = () => {
+      if (holdTimer) {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+      }
+    };
+
+    timerElement.addEventListener('pointerdown', (e) => {
+      if (!this.timer?.isRunning()) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      cancel();
+      holdTimer = setTimeout(() => {
+        holdTimer = null;
+        Utils.vibrate(30);
+        this.timer.finishNow();
+      }, CONFIG.OWNER_SKIP_HOLD_MS);
+    });
+
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(type => {
+      timerElement.addEventListener(type, cancel);
+    });
+
+    // No text selection, magnifier or callout menu on long press (iOS/Android)
+    timerElement.addEventListener('touchstart', (e) => {
+      if (e.cancelable) e.preventDefault();
+    }, { passive: false });
+    timerElement.addEventListener('contextmenu', (e) => e.preventDefault());
+    timerElement.addEventListener('selectstart', (e) => e.preventDefault());
   }
 
   setupThemeToggle() {
@@ -2353,15 +2671,15 @@ class DateRandomizerApp {
   setupIntroNavigation() {
     const buttons = Utils.$$('[data-next]');
 
-    console.log('Setting up intro navigation, found buttons:', buttons.length);
-
     buttons.forEach(btn => {
       const nextStep = btn.dataset.next;
-      console.log('Button found with data-next:', nextStep);
 
-      btn.addEventListener('click', (e) => {
+      btn.addEventListener('click', async (e) => {
         e.preventDefault();
-        console.log('Button clicked, navigating to:', nextStep);
+
+        // Ignore taps while a screen transition is still running
+        if (this.isNavigating) return;
+        this.isNavigating = true;
 
         // Add ripple effect
         this.createRipple(e, btn);
@@ -2369,10 +2687,16 @@ class DateRandomizerApp {
         this.soundManager.playClick();
         Utils.vibrate(50);
 
-        if (nextStep === 'stages') {
-          this.startStages();
-        } else {
-          this.navigateToScreen(nextStep);
+        try {
+          if (nextStep === 'stages') {
+            await this.startStages();
+          } else {
+            await this.navigateToScreen(nextStep);
+          }
+        } catch (error) {
+          console.error('Navigation failed:', error);
+        } finally {
+          this.isNavigating = false;
         }
       });
     });
@@ -2400,8 +2724,6 @@ class DateRandomizerApp {
     const currentScreen = Utils.$('.screen.active');
     const nextScreen = Utils.$(`#${screenId}`);
 
-    console.log('Navigating to:', screenId, 'Next screen found:', !!nextScreen);
-
     if (!nextScreen) {
       console.error('Screen not found:', screenId);
       return;
@@ -2416,7 +2738,6 @@ class DateRandomizerApp {
     }
 
     this.stateManager.update({ currentStep: screenId });
-    console.log('Screen activated:', screenId);
   }
 
   setupStages() {
@@ -2426,16 +2747,15 @@ class DateRandomizerApp {
     DATE_OPTIONS.stages.forEach((stageData, index) => {
       const component = new MysticStageComponent(stageData, index, {
         soundManager: this.soundManager,
-        onSpin: (idx, selectedIndex) => {
-          this.stateManager.updateStage(idx, { selectedIndex });
-        },
-        onConfirm: (idx) => this.handleStageConfirm(idx),
-        onRetry: (idx) => {
+        onSpin: (idx, selectedIndex, isReroll) => {
+          const stage = this.stateManager.getStage(idx);
           this.stateManager.updateStage(idx, {
-            selectedIndex: null,
-            confirmed: false
+            selectedIndex,
+            rerollsUsed: (stage.rerollsUsed || 0) + (isReroll ? 1 : 0)
           });
-        }
+        },
+        getRerollsLeft: (idx) => this.stateManager.getRerollsLeft(idx),
+        onConfirm: (idx) => this.handleStageConfirm(idx)
       });
 
       container.appendChild(component.render());
@@ -2444,91 +2764,161 @@ class DateRandomizerApp {
   }
 
   handleStageConfirm(index) {
-    this.stateManager.updateStage(index, { confirmed: true });
-    this.progressBar.updateStep(index, true);
-
     const isLast = index === DATE_OPTIONS.stages.length - 1;
-    
-    if (isLast) {
-      // Show final screen after delay
-      const unlockTime = Date.now() + CONFIG.DELAY_MS;
-      this.stateManager.update({ 
-        pendingStage: 'farewell',
-        pendingUnlockTime: unlockTime
-      });
-      
-      this.timer.start(unlockTime, () => this.showFinalScreen());
-    } else {
-      // Unlock next stage after delay
-      const unlockTime = Date.now() + CONFIG.DELAY_MS;
-      this.stateManager.updateStage(index + 1, { unlockTime });
-      this.stateManager.update({ 
-        pendingStage: index + 1,
-        pendingUnlockTime: unlockTime,
-        lastActiveStage: index + 1
-      });
-      
-      this.timer.start(unlockTime, () => {
-        this.stageComponents[index + 1].unlock();
-        this.stateManager.update({ pendingStage: null, pendingUnlockTime: null });
-        Toast.show('Новий етап розблоковано! 🎉', 'success');
-      });
+    const unlockTime = Date.now() + CONFIG.DELAY_MS;
+
+    // One atomic state write, so a reload can never catch a half-done update
+    const stages = this.stateManager.get('stages').map((stage, i) => {
+      if (i === index) return { ...stage, confirmed: true };
+      if (!isLast && i === index + 1) return { ...stage, unlockTime };
+      return stage;
+    });
+
+    this.stateManager.update(isLast
+      ? { stages, pendingStage: 'farewell', pendingUnlockTime: unlockTime }
+      : { stages, pendingStage: index + 1, pendingUnlockTime: unlockTime, lastActiveStage: index + 1 });
+
+    this.progressBar.updateStep(index, true);
+    this.startWait(unlockTime);
+  }
+
+  // Countdown for whatever is pending (next stage or the final screen).
+  startWait(unlockTime) {
+    const pending = this.stateManager.get('pendingStage');
+    const label = pending === 'farewell' ? 'До фіналу' : 'До наступного етапу';
+    this.timer.start(unlockTime, () => this.completeWait(), label);
+  }
+
+  // Single completion path for a wait: natural expiry, the owner's long-press
+  // skip, and "time already passed" on reload all end up here.
+  completeWait({ silent = false } = {}) {
+    const pending = this.stateManager.get('pendingStage');
+
+    if (pending === 'farewell') {
+      this.showFinalScreen();
+      return;
+    }
+    if (!Number.isInteger(pending)) return;
+
+    const now = Date.now();
+    const stage = this.stateManager.getStage(pending);
+    const stages = this.stateManager.get('stages').map((s, i) =>
+      i === pending && (s.unlockTime === null || s.unlockTime > now) ? { ...s, unlockTime: now } : s
+    );
+    this.stateManager.update({ stages, pendingStage: null, pendingUnlockTime: null });
+
+    this.unlockStage(pending, { scroll: !silent, silent });
+    if (!silent && stage) {
+      Toast.show('Новий етап розблоковано! 🎉', 'success');
     }
   }
 
-  startStages() {
-    this.navigateToScreen('stages-active');
-    
-    const stagesContainer = Utils.$('#stagesContainer');
-    if (stagesContainer) {
-      stagesContainer.classList.add('active');
-    }
+  unlockStage(index, { scroll = false, silent = false } = {}) {
+    const component = this.stageComponents[index];
+    if (!component) return;
 
-    this.progressBar.show();
-    
-    // Update state
-    this.stateManager.update({ 
+    this.preloadStageImages(index);
+    this.progressBar?.revealStep(index);
+    component.unlock({ silent });
+
+    if (scroll) {
+      this.scrollToStage(index, true);
+    }
+  }
+
+  preloadStageImages(index) {
+    const stage = DATE_OPTIONS.stages[index];
+    if (!stage) return;
+    stage.options.forEach(option => {
+      const img = new Image();
+      img.src = option.image;
+      this.preloadedImages.push(img);
+    });
+  }
+
+  scrollToStage(index, smooth = true) {
+    const element = this.stageComponents[index]?.element;
+    if (!element) return;
+    // Wait a frame so the unlocked card has its final layout
+    requestAnimationFrame(() => {
+      try {
+        element.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' });
+      } catch (e) {
+        element.scrollIntoView(true);
+      }
+    });
+  }
+
+  async startStages() {
+    const currentScreen = Utils.$('.intro-screen.active');
+    const stagesContainer = Utils.$('#stagesContainer');
+
+    this.stateManager.update({
       introCompleted: true,
       currentStep: 'stages'
     });
 
-    // Unlock first stage
-    setTimeout(() => {
-      this.stageComponents[0].unlock();
-    }, 500);
+    if (currentScreen && stagesContainer) {
+      await TransitionManager.transition(currentScreen, stagesContainer, 'fade');
+    } else if (stagesContainer) {
+      stagesContainer.classList.add('active');
+    }
 
-    // Hide intro screens
+    // Make sure no intro screen stays active underneath
     Utils.$$('.intro-screen').forEach(screen => {
       screen.classList.remove('active');
     });
+
+    this.progressBar.show();
+
+    // Small pause so the unlock animation is visible
+    await Utils.wait(250);
+    this.unlockStage(0);
   }
 
+  // Idempotent: safe to call again (reload, timer, restore) without replaying
+  // the celebration or duplicating anything.
   showFinalScreen() {
+    if (this.finalShown) return;
+    this.finalShown = true;
+
     const stagesContainer = Utils.$('#stagesContainer');
     const finalScreen = Utils.$('#final');
 
+    Utils.$$('.intro-screen').forEach(screen => screen.classList.remove('active'));
     if (stagesContainer) stagesContainer.classList.remove('active');
     if (finalScreen) finalScreen.classList.add('active');
 
     this.progressBar.hide();
     this.timer.stop();
 
-    this.stateManager.update({ 
+    const firstArrival = !this.stateManager.get('farewellReached');
+    const finishedAt = this.stateManager.get('finishedAt') || Date.now();
+
+    this.stateManager.update({
       farewellReached: true,
+      finishedAt,
       pendingStage: null,
       pendingUnlockTime: null
     });
 
-    // Generate roadmap
+    this.applyRatingSelection(this.stateManager.get('rating'));
+
+    // Generate roadmap (and prepare the PNG for the save button)
     const roadmapContainer = Utils.$('#roadmapContainer');
     if (roadmapContainer) {
-      this.roadmapGenerator.generate(roadmapContainer).then(canvas => {
-        this.canvas = canvas;
-      });
+      const date = new Date(finishedAt);
+      this.roadmapGenerator.generate(roadmapContainer, date)
+        .then(async canvas => {
+          if (!canvas) return;
+          this.canvas = canvas;
+          this.roadmapFile = await this.roadmapGenerator.toFile(canvas, date);
+        })
+        .catch(error => console.error('Roadmap generation failed:', error));
     }
 
-    // Celebration confetti
-    if (typeof confetti === 'function') {
+    // Celebration confetti — only the first time, not on every reload
+    if (firstArrival && typeof confetti === 'function') {
       const duration = 3000;
       const end = Date.now() + duration;
 
@@ -2554,131 +2944,122 @@ class DateRandomizerApp {
       };
       frame();
     }
+  }
 
+  // Bound once at start-up (never from showFinalScreen).
+  setupFinalScreen() {
+    const saveBtn = Utils.$('#downloadRoadmap');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', () => this.saveRoadmap());
+    }
     this.setupEmojiRating();
   }
 
-  setupFinalScreen() {
-    const downloadBtn = Utils.$('#downloadRoadmap');
-    if (downloadBtn) {
-      downloadBtn.addEventListener('click', () => {
-        if (this.canvas) {
-          this.roadmapGenerator.download(this.canvas);
-        }
-      });
+  saveRoadmap() {
+    if (!this.canvas) {
+      Toast.show('Картинка ще малюється, спробуй за мить 🙂', 'info');
+      return;
     }
+    const finishedAt = this.stateManager.get('finishedAt');
+    const date = finishedAt ? new Date(finishedAt) : new Date();
+    this.roadmapGenerator.save(this.canvas, this.roadmapFile, date);
   }
 
   setupEmojiRating() {
     const buttons = Utils.$$('.emoji-btn');
-    
+
     const messages = {
-      happy: 'Супер, радий, що тобі сподобалось! 😊',
-      neutral: 'Дякую за відгук! Наступного разу буде краще! 🙂',
-      sad: 'Вибач, якщо щось пішло не так... 💙',
-      speechless: 'Без слів? Сподіваюсь, це добре! 😊',
-      laughing: 'Класно, що було так весело! 🎉',
-      inlove: 'О, здається, ти в захваті! Чудово! 💖'
+      excited: 'У захваті? Оце я розумію — день вдався! 🤩',
+      laughing: 'Класно, що було так весело! 😂',
+      happy: 'Супер, радий, що тобі сподобалося! 😊',
+      neutral: 'Дякую за чесність! Наступного разу буде ще краще 🙂',
+      speechless: 'Без слів? Сподіваюся, це хороше «без слів» 😄',
+      sad: 'Ой… Вибач, якщо щось пішло не так. Я все виправлю! 🙏'
     };
 
     buttons.forEach(btn => {
       btn.addEventListener('click', () => {
         const rating = btn.dataset.rating;
         const message = messages[rating] || 'Дякую за оцінку!';
-        
+
+        this.stateManager.update({ rating });
+        this.applyRatingSelection(rating);
+
         Toast.show(message, 'success', 4000);
         this.soundManager.playSuccess();
         Utils.vibrate([100, 50, 100, 50, 100]);
-
-        // Add selected state
-        buttons.forEach(b => b.classList.remove('selected'));
-        btn.classList.add('selected');
-
-        // Reset after delay
-        setTimeout(() => {
-          if (confirm('Хочеш розпочати спочатку?')) {
-            this.stateManager.clearAll();
-            location.reload();
-          }
-        }, 2000);
       });
+    });
+  }
+
+  applyRatingSelection(rating) {
+    Utils.$$('.emoji-btn').forEach(btn => {
+      const selected = rating !== null && btn.dataset.rating === rating;
+      btn.classList.toggle('selected', selected);
+      btn.setAttribute('aria-pressed', String(selected));
     });
   }
 
   restoreState() {
     const state = this.stateManager.state;
-    console.log('Restoring state:', state);
 
     // If farewell reached, show final screen
     if (state.farewellReached && this.stateManager.areAllStagesConfirmed()) {
-      console.log('Showing final screen');
       this.showFinalScreen();
       return;
     }
 
     // If intro completed, show stages
     if (state.introCompleted) {
-      console.log('Intro completed, showing stages');
       Utils.$$('.intro-screen').forEach(screen => {
         screen.classList.remove('active');
       });
 
       const stagesContainer = Utils.$('#stagesContainer');
       if (stagesContainer) stagesContainer.classList.add('active');
-      
+
       this.progressBar.show();
 
       // Restore stage states
       this.stageComponents.forEach((component, index) => {
         const stageState = state.stages[index];
-        
-        // Update progress bar
+
         if (stageState.confirmed) {
           this.progressBar.updateStep(index, true);
-          component.unlock();
+          this.progressBar.revealStep(index);
+          component.unlock({ silent: true });
           component.setSelected(stageState.selectedIndex);
           component.setConfirmed();
-        } else if (this.stateManager.isStageUnlocked(index)) {
-          component.unlock();
-          if (stageState.selectedIndex !== null) {
-            component.setSelected(stageState.selectedIndex);
-          }
+        } else if (state.pendingStage !== index && this.stateManager.isStageUnlocked(index)) {
+          this.unlockStage(index, { silent: true });
+          component.setSelected(stageState.selectedIndex);
         }
       });
 
       // Resume pending countdown
       if (state.pendingStage !== null && state.pendingUnlockTime) {
-        const remaining = state.pendingUnlockTime - Date.now();
-        
-        if (remaining > 0) {
-          if (state.pendingStage === 'farewell') {
-            this.timer.start(state.pendingUnlockTime, () => this.showFinalScreen());
-          } else {
-            this.timer.start(state.pendingUnlockTime, () => {
-              this.stageComponents[state.pendingStage].unlock();
-              this.stateManager.update({ pendingStage: null, pendingUnlockTime: null });
-              Toast.show('Новий етап розблоковано! 🎉', 'success');
-            });
-          }
+        if (state.pendingUnlockTime - Date.now() > 0) {
+          this.startWait(state.pendingUnlockTime);
         } else {
-          // Time already passed
-          if (state.pendingStage === 'farewell') {
-            this.showFinalScreen();
-          } else {
-            this.stageComponents[state.pendingStage].unlock();
-            this.stateManager.update({ pendingStage: null, pendingUnlockTime: null });
-          }
+          // Time already passed while the page was closed
+          this.completeWait({ silent: true });
+          if (this.finalShown) return;
         }
       }
+
+      // Bring the current step into view: the stage to play now, or the
+      // last confirmed one while waiting.
+      const stages = this.stateManager.get('stages');
+      const pending = this.stateManager.get('pendingStage');
+      let current = stages.findIndex(s => !s.confirmed);
+      if (pending === 'farewell') current = stages.length - 1;
+      else if (Number.isInteger(pending)) current = pending - 1;
+      if (current > 0) this.scrollToStage(current, false);
 
       return;
     }
 
     // First time - just show intro-1 (it's already active in HTML)
-    // Don't call navigateToScreen here as it's already visible
-    console.log('First visit or intro not completed, showing intro-1');
-    
-    // Make sure intro-1 is active
     const intro1 = Utils.$('#intro-1');
     if (intro1 && !intro1.classList.contains('active')) {
       intro1.classList.add('active');
@@ -2687,21 +3068,54 @@ class DateRandomizerApp {
 }
 
 // ============================================
+// OWNER TOOLS: ?reset=1
+// ============================================
+
+// Clears everything this app saved on the device and reloads on a clean URL
+// (no query string), so the next visit starts from the very first screen.
+function handleResetParam() {
+  if (URL_PARAMS.get('reset') !== '1') return false;
+
+  const keys = [
+    CONFIG.STORAGE_KEY,
+    ...CONFIG.LEGACY_STORAGE_KEYS,
+    CONFIG.USER_ID_KEY,
+    CONFIG.FAVORITES_KEY,
+    CONFIG.SOUNDS_ENABLED_KEY,
+    CONFIG.THEME_KEY
+  ];
+  keys.forEach(key => {
+    try {
+      localStorage.removeItem(key);
+    } catch (e) {
+      // storage unavailable — nothing to clear
+    }
+  });
+
+  window.location.replace(window.location.pathname);
+  return true;
+}
+
+// ============================================
 // INITIALIZE APP
 // ============================================
 
+let app = null;
+
 document.addEventListener('DOMContentLoaded', () => {
-  const app = new DateRandomizerApp();
+  if (handleResetParam()) return;
+  app = new DateRandomizerApp();
   app.init();
 });
 
-// Handle visibility change (for timer accuracy)
+// Timers are throttled in background tabs / on a locked phone:
+// re-check the countdown as soon as the page is visible again.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
-    // Force timer update when tab becomes visible
-    const timerElement = Utils.$('#globalTimer');
-    if (timerElement?.classList.contains('active')) {
-      // Timer will auto-update on next interval
-    }
+    app?.timer?.refresh();
   }
+});
+
+window.addEventListener('pageshow', () => {
+  app?.timer?.refresh();
 });
