@@ -18,7 +18,14 @@ const TEST_MODE = true;
 
 // Службові параметри адреси (для репетиції власником):
 //   ?fast=1  — пауза між етапами 5 секунд замість 15 хвилин;
-//   ?reset=1 — стерти збережений прогрес і почати з чистого аркуша.
+//   ?reset=1 — стерти збережений прогрес і почати з чистого аркуша
+//              (це ЄДИНИЙ спосіб стерти вже пройдений день).
+//
+// ⚠️ Прогрес зберігається в ТОМУ браузері, де відкрили посилання. Telegram,
+// Instagram, Safari і Chrome мають кожен своє сховище: якщо почати в Telegram,
+// а потім відкрити посилання в Safari, день почнеться спочатку. Тож дай Мері
+// посилання так, щоб вона одразу відкрила його в Safari/Chrome, і далі
+// повертайся туди ж (на iPhone: «…» → «Відкрити в Safari»).
 const URL_PARAMS = new URLSearchParams(window.location.search);
 const FAST_MODE = TEST_MODE || URL_PARAMS.get('fast') === '1';
 
@@ -130,6 +137,39 @@ const DATE_OPTIONS = {
     }
   ]
 };
+
+// ============================================
+// SAFE STORAGE
+// ============================================
+// Some in-app browsers block localStorage (it throws). Then the app still
+// works, just from memory for this visit, instead of showing a blank page.
+
+const Store = {
+  get(key) {
+    try {
+      return window.localStorage.getItem(key);
+    } catch (e) {
+      return null;
+    }
+  },
+  set(key, value) {
+    try {
+      window.localStorage.setItem(key, value);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  },
+  remove(key) {
+    try {
+      window.localStorage.removeItem(key);
+    } catch (e) {
+      // unavailable — nothing to remove
+    }
+  }
+};
+
+const BASE_TITLE = document.title;
 
 // ============================================
 // LOOK: palette & photo shapes
@@ -418,7 +458,7 @@ const Color = {
 
 class SoundManager {
   constructor() {
-    this.enabled = localStorage.getItem(CONFIG.SOUNDS_ENABLED_KEY) !== 'false';
+    this.enabled = Store.get(CONFIG.SOUNDS_ENABLED_KEY) !== 'false';
     this.audioContext = null;
     this.AudioCtor = null;
   }
@@ -459,7 +499,7 @@ class SoundManager {
 
   toggle() {
     this.enabled = !this.enabled;
-    localStorage.setItem(CONFIG.SOUNDS_ENABLED_KEY, this.enabled);
+    Store.set(CONFIG.SOUNDS_ENABLED_KEY, String(this.enabled));
     return this.enabled;
   }
 
@@ -601,7 +641,7 @@ class ConversationTopics {
   // point at an existing topic (e.g. a removed category) or are corrupted.
   loadFavorites() {
     try {
-      const raw = JSON.parse(localStorage.getItem(CONFIG.FAVORITES_KEY) || '[]');
+      const raw = JSON.parse(Store.get(CONFIG.FAVORITES_KEY) || '[]');
       return Array.isArray(raw) ? raw.filter(key => this.getTopicByKey(key) !== null) : [];
     } catch (e) {
       return [];
@@ -755,11 +795,7 @@ class ConversationTopics {
       this.favorites.push(this.key);
       Utils.vibrate([40, 30, 40]);
     }
-    try {
-      localStorage.setItem(CONFIG.FAVORITES_KEY, JSON.stringify(this.favorites));
-    } catch (e) {
-      // storage full/unavailable — favourites just won't persist
-    }
+    Store.set(CONFIG.FAVORITES_KEY, JSON.stringify(this.favorites)); // may fail silently: favourites just won't persist
     this.renderChips();
     this.updateStar();
   }
@@ -793,18 +829,20 @@ class Toast {
 
 class StateManager {
   constructor() {
+    this.userId = Store.get(CONFIG.USER_ID_KEY) || this.createUserId();
     this.state = this.getDefaultState();
   }
 
   getDefaultState() {
     return {
-      userId: localStorage.getItem(CONFIG.USER_ID_KEY) || this.createUserId(),
+      userId: this.userId,
       introStep: 0,
       introCompleted: false,
       stages: DATE_OPTIONS.stages.map(() => ({
         selectedIndex: null,
         confirmed: false,
-        rerollsUsed: 0
+        rerollsUsed: 0,
+        rejectedIndex: null // the option given up via «Інший варіант» (for the memory replay)
       })),
       // waiting for: a stage index (opens it), 'farewell' (final screen) or null
       pendingStage: null,
@@ -817,16 +855,16 @@ class StateManager {
 
   createUserId() {
     const id = `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
-    localStorage.setItem(CONFIG.USER_ID_KEY, id);
+    Store.set(CONFIG.USER_ID_KEY, id);
     return id;
   }
 
   load() {
     try {
       // States from older versions are not reused.
-      CONFIG.LEGACY_STORAGE_KEYS.forEach(key => localStorage.removeItem(key));
+      CONFIG.LEGACY_STORAGE_KEYS.forEach(key => Store.remove(key));
 
-      const saved = localStorage.getItem(CONFIG.STORAGE_KEY);
+      const saved = Store.get(CONFIG.STORAGE_KEY);
       if (!saved) return;
 
       const normalized = this.normalize(JSON.parse(saved));
@@ -857,10 +895,14 @@ class StateManager {
       const optionCount = stageDefs[index].options.length;
       const selectedIndex = Number.isInteger(s.selectedIndex) &&
         s.selectedIndex >= 0 && s.selectedIndex < optionCount ? s.selectedIndex : null;
+      // older saves have no rejectedIndex → null (the replay just skips that line)
+      const rejectedIndex = Number.isInteger(s.rejectedIndex) && s.rejectedIndex >= 0 &&
+        s.rejectedIndex < optionCount && s.rejectedIndex !== selectedIndex ? s.rejectedIndex : null;
       return {
         selectedIndex,
         confirmed: Boolean(s.confirmed) && selectedIndex !== null,
-        rerollsUsed: Number.isInteger(s.rerollsUsed) && s.rerollsUsed > 0 ? s.rerollsUsed : 0
+        rerollsUsed: Number.isInteger(s.rerollsUsed) && s.rerollsUsed > 0 ? s.rerollsUsed : 0,
+        rejectedIndex
       };
     });
 
@@ -893,11 +935,17 @@ class StateManager {
   }
 
   save() {
-    try {
-      localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(this.state));
-    } catch (e) {
-      console.error('Error saving state:', e);
+    // `dirty` = the last write failed; pagehide retries it (flush) instead of
+    // blindly rewriting, so a closing tab never undoes ?reset=1 or another tab.
+    this.dirty = !Store.set(CONFIG.STORAGE_KEY, JSON.stringify(this.state));
+    if (this.dirty && !this.warnedNoStorage) {
+      this.warnedNoStorage = true;
+      console.warn('Storage is unavailable: progress lives only in this tab');
     }
+  }
+
+  flush() {
+    if (this.dirty) this.save();
   }
 
   reset() {
@@ -1436,6 +1484,12 @@ class DateRandomizerApp {
 
       this.setupHeader();
       this.setupRouteSheet();
+      document.addEventListener('keydown', (e) => {
+        if (this.scene?.type !== 'replay') return;
+        if (e.key === 'ArrowRight') this.guard(() => this.replayStep(1));
+        else if (e.key === 'ArrowLeft') this.guard(() => this.replayStep(-1));
+        else if (e.key === 'Escape') this.guard(() => this.closeReplay());
+      });
 
       this.show(this.sceneFromState(), { animate: false });
 
@@ -1489,7 +1543,7 @@ class DateRandomizerApp {
     }
   }
 
-  async show(scene, { animate = true } = {}) {
+  async show(scene, { animate = true, back = false } = {}) {
     this.timer.stop();
     this.closeRoute();
     this.scene = scene;
@@ -1501,16 +1555,19 @@ class DateRandomizerApp {
       case 'question':
       case 'draw': view = this.buildStage(scene); break;
       case 'wait': view = this.buildWait(scene); break;
+      case 'replay': view = this.buildReplay(scene); break;
       default: view = this.buildFinal(scene);
     }
 
     this.applyChapter(scene);
     this.updateHeader(scene);
-    await this.swap(view.el, animate);
+    // a finished day is marked in the browser tab too
+    document.title = this.stateManager.get('farewellReached') ? `✓ ${BASE_TITLE}` : BASE_TITLE;
+    await this.swap(view.el, animate, back);
     if (view.after) await view.after();
   }
 
-  async swap(el, animate) {
+  async swap(el, animate, back = false) {
     const old = [...this.scenesEl.querySelectorAll('.scene')];
     this.scenesEl.appendChild(el);
     this.refit(el);
@@ -1519,11 +1576,12 @@ class DateRandomizerApp {
       old.forEach(o => o.remove());
       return;
     }
-    old.forEach(o => o.classList.add('scene-out'));
-    el.classList.add('scene-in');
+    const inCls = back ? 'scene-in-back' : 'scene-in';
+    old.forEach(o => o.classList.add(back ? 'scene-out-back' : 'scene-out'));
+    el.classList.add(inCls);
     await Utils.wait(CONFIG.SCENE_MS);
     old.forEach(o => o.remove());
-    el.classList.remove('scene-in');
+    el.classList.remove(inCls);
   }
 
   makeScene(kind) {
@@ -1555,6 +1613,9 @@ class DateRandomizerApp {
   // ---------- look: chapter colours, header ----------
 
   chapterFor(scene) {
+    if (scene.type === 'replay') {
+      return Color.chapter(scene.stageIndex === undefined ? PALETTE.cream : stageColor(scene.stageIndex));
+    }
     if (scene.type === 'intro') return Color.chapter(PALETTE.cream);
     if (scene.type === 'final') return Color.chapter(PALETTE.ink);
     return Color.chapter(stageColor(scene.stageIndex));
@@ -1577,7 +1638,7 @@ class DateRandomizerApp {
     };
     Object.entries(vars).forEach(([k, v]) => root.style.setProperty(k, v));
     root.dataset.tone = c.dark ? 'dark' : 'light';
-    root.dataset.chapter = scene.type === 'intro' || scene.type === 'final' ? scene.type : 'stage';
+    root.dataset.chapter = ['intro', 'final', 'replay'].includes(scene.type) ? scene.type : 'stage';
     if (this.themeMeta) this.themeMeta.setAttribute('content', c.bg);
     this.chapter = c;
   }
@@ -1597,6 +1658,7 @@ class DateRandomizerApp {
     });
 
     Utils.$('#routeBtn').addEventListener('click', () => this.openRoute());
+    Utils.$('#replayClose').addEventListener('click', () => this.guard(() => this.closeReplay()));
     Utils.$('#progress').addEventListener('click', () => {
       if (this.routeAvailable()) this.openRoute();
     });
@@ -1610,7 +1672,8 @@ class DateRandomizerApp {
     const progress = Utils.$('#progress');
     const kicker = Utils.$('#kicker');
     const routeBtn = Utils.$('#routeBtn');
-    const total = scene.type === 'intro' ? this.introCount : STAGE_COUNT;
+    const total = scene.type === 'intro' ? this.introCount
+      : (scene.type === 'replay' ? this.replaySlides().length : STAGE_COUNT);
 
     if (progress.children.length !== total) {
       progress.innerHTML = Array.from({ length: total }, () => '<span class="seg"><i></i></span>').join('');
@@ -1618,6 +1681,7 @@ class DateRandomizerApp {
 
     const states = Array.from({ length: total }, (_, i) => {
       if (scene.type === 'intro') return i < scene.step ? 'done' : (i === scene.step ? 'current' : '');
+      if (scene.type === 'replay') return i < scene.slide ? 'done' : (i === scene.slide ? 'current' : '');
       if (scene.type === 'final') return 'done';
       if (scene.type === 'wait') {
         if (i <= scene.stageIndex) return 'done';
@@ -1635,12 +1699,15 @@ class DateRandomizerApp {
     progress.setAttribute('aria-disabled', String(!interactive));
     progress.tabIndex = interactive ? 0 : -1;
     routeBtn.hidden = !interactive;
+    Utils.$('#replayClose').hidden = scene.type !== 'replay';
+    kicker.classList.toggle('is-badge', scene.type === 'final');
 
     const n = `${Utils.pad2((scene.stageIndex ?? 0) + 1)} / ${Utils.pad2(STAGE_COUNT)}`;
     // Owner safety net: the 5-second test mode is visible in the label
     const tag = FAST_MODE ? 'тест' : 'пауза';
     let text = '';
-    if (scene.type === 'final') text = 'Фінал';
+    if (scene.type === 'final') text = `✓ Пройдено · ${this.finishedDateText()}`;
+    else if (scene.type === 'replay') text = 'Спогад про день';
     else if (scene.type === 'wait') text = `Етап ${n} · ${tag}`;
     else if (scene.type !== 'intro') text = FAST_MODE ? `Етап ${n} · тест` : `Етап ${n}`;
     else if (FAST_MODE) text = 'Тестовий режим';
@@ -1803,6 +1870,17 @@ class DateRandomizerApp {
     return Utils.randomItem(pool);
   }
 
+  // After bfcache / a long time in the background: the countdown is always
+  // derived from the saved unlock time, so just re-check it now.
+  resume() {
+    this.timer.refresh();
+    if (this.busy || this.scene?.type !== 'wait') return;
+    const el = this.currentSceneEl();
+    if (el && !el.classList.contains('is-done') && !this.timer.isRunning()) {
+      this.show(this.sceneFromState(), { animate: false });
+    }
+  }
+
   currentSceneEl() {
     return this.scenesEl.querySelector('.scene:last-child');
   }
@@ -1944,7 +2022,11 @@ class DateRandomizerApp {
 
     const rejected = st.selectedIndex;
     const target = this.pickIndex(i, rejected);
-    this.stateManager.updateStage(i, { selectedIndex: target, rerollsUsed: (st.rerollsUsed || 0) + 1 });
+    this.stateManager.updateStage(i, {
+      selectedIndex: target,
+      rerollsUsed: (st.rerollsUsed || 0) + 1,
+      rejectedIndex: rejected
+    });
 
     const el = this.currentSceneEl();
     await this.backToPool(el, i, rejected);
@@ -2012,12 +2094,12 @@ class DateRandomizerApp {
     await this.show({ type: 'wait', stageIndex: i });
   }
 
-  burst(colors, origin = { y: 0.72 }) {
+  burst(colors, origin = { y: 0.72 }, count = 70) {
     if (typeof confetti !== 'function') return;
     const c = this.chapter || Color.chapter(PALETTE.cream);
     try {
       confetti({
-        particleCount: 70,
+        particleCount: count,
         spread: 70,
         startVelocity: 38,
         ticks: 150,
@@ -2256,7 +2338,11 @@ class DateRandomizerApp {
         ${RATINGS.map(([id, emoji, label]) =>
           `<button class="rate-btn" type="button" data-rating="${id}" aria-label="${label}" aria-pressed="false">${emoji}</button>`).join('')}
       </div>`;
-    actions.innerHTML = `<button class="btn" type="button" id="downloadRoadmap">${Utils.icon('download')}<span>Зберегти як картинку</span></button>`;
+    actions.innerHTML = `
+      <button class="btn" type="button" id="downloadRoadmap">${Utils.icon('download')}<span>Зберегти як картинку</span></button>
+      <div class="quiet-row">
+        <button class="btn-quiet" type="button" data-action="replay">${Utils.icon('play')}<span>Переглянути день знову</span></button>
+      </div>`;
 
     this.buildRouteList(body.querySelector('.final-route'), this.routeItems());
 
@@ -2273,6 +2359,7 @@ class DateRandomizerApp {
     this.applyRatingSelection(el, this.stateManager.get('rating'));
 
     actions.querySelector('#downloadRoadmap').addEventListener('click', () => this.saveStory());
+    actions.querySelector('[data-action="replay"]').addEventListener('click', () => this.guard(() => this.openReplay()));
 
     const after = async () => {
       if (this.celebrateFinal) {
@@ -2281,6 +2368,149 @@ class DateRandomizerApp {
         setTimeout(() => this.burst([PALETTE.accent, PALETTE.cream, ...PALETTE.stageFallback]), 450);
       }
       this.prepareStory();
+    };
+    return { el, after };
+  }
+
+  // ---------- memory replay (read-only: never writes state) ----------
+
+  finishedDateText() {
+    const d = this.storyDate();
+    return `${d.toLocaleDateString('uk-UA', { day: 'numeric', month: 'long' })} ${d.getFullYear()}`;
+  }
+
+  replaySlides() {
+    const stages = this.stateManager.get('stages');
+    return [
+      { kind: 'intro' },
+      ...DATE_OPTIONS.stages
+        .map((_, i) => ({ kind: 'stage', i }))
+        .filter(({ i }) => stages[i].confirmed && stages[i].selectedIndex !== null)
+    ];
+  }
+
+  replayScene(slide) {
+    const item = this.replaySlides()[slide];
+    return { type: 'replay', slide, stageIndex: item?.kind === 'stage' ? item.i : undefined };
+  }
+
+  async openReplay() {
+    if (!this.stateManager.get('farewellReached')) return;
+    this.soundManager.playClick();
+    await this.show(this.replayScene(0));
+  }
+
+  async replayStep(delta) {
+    if (this.scene?.type !== 'replay') return;
+    const count = this.replaySlides().length;
+    const next = this.scene.slide + delta;
+    if (next < 0) return;
+    if (next >= count) {
+      await this.closeReplay({ finished: true });
+      return;
+    }
+    this.soundManager.playClick();
+    Utils.vibrate(10);
+    await this.show(this.replayScene(next), { back: delta < 0 });
+  }
+
+  async closeReplay({ finished = false } = {}) {
+    if (this.scene?.type !== 'replay') return;
+    await this.show({ type: 'final' }, { back: !finished });
+    if (finished) this.burst([PALETTE.accent, PALETTE.cream, ...PALETTE.stageFallback], { y: 0.6 }, 40);
+  }
+
+  buildReplay(scene) {
+    const slides = this.replaySlides();
+    const item = slides[scene.slide] || slides[0];
+    const isLast = scene.slide >= slides.length - 1;
+    const { el, body, actions } = this.makeScene('replay');
+    let hero = null;
+
+    if (item.kind === 'intro') {
+      // "Як усе починалось": the very first slide, as a memory
+      const tpl = document.getElementById('tpl-intro-1');
+      if (tpl) body.appendChild(tpl.content.cloneNode(true));
+      const copy = body.querySelector('.intro-copy');
+      const eyebrow = document.createElement('p');
+      eyebrow.className = 'eyebrow';
+      eyebrow.textContent = `Як усе починалось · ${this.finishedDateText()}`;
+      copy?.prepend(eyebrow);
+    } else {
+      const i = item.i;
+      const stage = DATE_OPTIONS.stages[i];
+      const st = this.stateManager.getStage(i);
+      const option = stage.options[st.selectedIndex];
+      body.innerHTML = `
+        <div class="memory-head">
+          <p class="eyebrow">Етап ${Utils.pad2(i + 1)}</p>
+          <p class="draw-question">${Utils.escapeHtml(stage.question)}</p>
+        </div>
+        <div class="memory" style="--r: ${stageRatio(i)}">
+          <div class="hero-slot"></div>
+          <p class="option-name">${Utils.escapeHtml(option.text)}</p>
+          <div class="memory-extra"></div>
+        </div>`;
+      hero = createPhoto(option, stage, 'hero');
+      body.querySelector('.hero-slot').appendChild(hero);
+      const extra = body.querySelector('.memory-extra');
+      const map = createMapLink(option);
+      if (map) extra.appendChild(map);
+      // the option given up via «Інший варіант» (older saves don't have it)
+      const rejected = Number.isInteger(st.rejectedIndex) ? stage.options[st.rejectedIndex] : null;
+      if (rejected) {
+        const row = document.createElement('p');
+        row.className = 'memory-rejected';
+        const thumb = createPhoto(rejected, stage, 'memory-rejected-thumb');
+        const x = document.createElement('span');
+        x.className = 'tile-x';
+        x.innerHTML = Utils.icon('close');
+        thumb.appendChild(x);
+        const label = document.createElement('span');
+        label.append('передумали: ');
+        const name = document.createElement('s');
+        name.textContent = rejected.text;
+        label.appendChild(name);
+        row.append(thumb, label);
+        extra.appendChild(row);
+      }
+    }
+
+    actions.innerHTML = `
+      <div class="replay-nav">
+        <button class="nav-back" type="button" data-action="back" aria-label="Назад" ${scene.slide === 0 ? 'disabled' : ''}>${Utils.icon('arrow', 'flip')}</button>
+        <button class="btn" type="button" data-action="next">${isLast ? 'До фіналу' : 'Далі'}${Utils.icon('arrow')}</button>
+      </div>`;
+    const tooSoon = () => performance.now() < (this.swipeUntil || 0);
+    actions.querySelector('[data-action="next"]').addEventListener('click', () => { if (!tooSoon()) this.guard(() => this.replayStep(1)); });
+    actions.querySelector('[data-action="back"]').addEventListener('click', () => { if (!tooSoon()) this.guard(() => this.replayStep(-1)); });
+
+    // tap right half → forward, left half → back (links/buttons keep working)
+    body.addEventListener('click', (e) => {
+      if (tooSoon() || e.target.closest('a, button')) return;
+      const r = el.getBoundingClientRect();
+      this.guard(() => this.replayStep(e.clientX - r.left < r.width / 2 ? -1 : 1));
+    });
+    // swipe left/right
+    let sx = null;
+    let sy = null;
+    el.addEventListener('pointerdown', (e) => { sx = e.clientX; sy = e.clientY; });
+    el.addEventListener('pointerup', (e) => {
+      if (sx === null) return;
+      const dx = e.clientX - sx;
+      const dy = e.clientY - sy;
+      sx = null;
+      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+        this.swipeUntil = performance.now() + 450;
+        this.guard(() => this.replayStep(dx < 0 ? 1 : -1));
+      }
+    });
+    el.addEventListener('pointercancel', () => { sx = null; });
+    // a mouse drag on a photo would start a native image drag and swallow the swipe
+    el.addEventListener('dragstart', (e) => e.preventDefault());
+
+    const after = async () => {
+      if (hero) checkLowRes(hero);
     };
     return { el, after };
   }
@@ -2342,13 +2572,7 @@ function handleResetParam() {
     CONFIG.SOUNDS_ENABLED_KEY,
     CONFIG.LEGACY_THEME_KEY
   ];
-  keys.forEach(key => {
-    try {
-      localStorage.removeItem(key);
-    } catch (e) {
-      // storage unavailable — nothing to clear
-    }
-  });
+  keys.forEach(key => Store.remove(key));
 
   window.location.replace(window.location.pathname);
   return true;
@@ -2366,14 +2590,20 @@ document.addEventListener('DOMContentLoaded', () => {
   app.init();
 });
 
-// Timers are throttled in background tabs / on a locked phone:
-// re-check the countdown as soon as the page is visible again.
+// Timers are throttled in background tabs / on a locked phone, and frozen
+// in the back/forward cache: recompute from the saved unlock time as soon as
+// the page is visible again.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') {
-    app?.timer?.refresh();
-  }
+  if (document.visibilityState === 'visible') app?.resume();
 });
 
-window.addEventListener('pageshow', () => {
-  app?.timer?.refresh();
+window.addEventListener('pageshow', (e) => {
+  if (e.persisted) app?.resume();
+});
+
+// Last chance when the tab is closed or put away: every step (including the
+// pick before a draw is revealed) is already saved; this only retries a
+// write that failed.
+window.addEventListener('pagehide', () => {
+  app?.stateManager.flush();
 });
